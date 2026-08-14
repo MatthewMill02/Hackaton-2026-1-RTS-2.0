@@ -17,6 +17,10 @@ const COLOR_ACCENT_RED: Color = Color(1.0, 0.25, 0.25, 1.0)
 const COLOR_SUCCESS_GREEN: Color = Color(0.20, 0.90, 0.45, 1.0)
 const COLOR_WARNING_GOLD: Color = Color(1.0, 0.82, 0.20, 1.0)
 
+const COLOR_PRIMARY: Color = Color(0.08, 0.18, 0.30, 0.9)
+const COLOR_PRIMARY_HOVER: Color = Color(0.14, 0.28, 0.46, 0.95)
+const COLOR_PRIMARY_PRESSED: Color = Color(0.05, 0.12, 0.22, 0.95)
+
 const COLOR_TEXT_MAIN: Color = Color(0.96, 0.98, 1.0, 1.0)
 const COLOR_TEXT_MUTED: Color = Color(0.55, 0.65, 0.78, 1.0)
 
