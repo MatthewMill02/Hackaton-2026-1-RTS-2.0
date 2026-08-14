@@ -41,8 +41,65 @@ var building_instances: Array = []
 var next_instance_id: int = 1
 var textures_cache: Dictionary = {}
 
-const POWER_GRID_HQ_RADIUS: float = 8.0
-const POWER_GRID_PYLON_RADIUS: float = 6.5
+const POWER_GRID_HQ_RADIUS: int = 4  # tiles
+const POWER_GRID_PYLON_RADIUS: int = 3  # tiles
+
+# Pre-computed corner-cut offsets for a rounded-square power field.
+# For radius R: a (2R+1)x(2R+1) square with 3 tiles removed from each corner.
+# Corner cut pattern (example R=4, cuts at (±4,±4), (±3,±4)/(±4,±3)):
+#   The 3 removed tiles per corner are: (R,R), (R,R-1), (R-1,R)
+static func get_power_offsets(radius: int) -> Array:
+	var offsets: Array = []
+	# Build corner cuts lookup
+	var cuts: Dictionary = {}
+	for sign_x in [-1, 1]:
+		for sign_y in [-1, 1]:
+			cuts[Vector2i(sign_x * radius, sign_y * radius)] = true
+			cuts[Vector2i(sign_x * (radius - 1), sign_y * radius)] = true
+			cuts[Vector2i(sign_x * radius, sign_y * (radius - 1))] = true
+	for dy in range(-radius, radius + 1):
+		for dx in range(-radius, radius + 1):
+			var off = Vector2i(dx, dy)
+			if not cuts.has(off):
+				offsets.append(off)
+	return offsets
+
+static func get_powered_tiles(center: Vector2i, radius: int) -> Array:
+	var tiles: Array = []
+	for off in get_power_offsets(radius):
+		tiles.append(center + off)
+	return tiles
+
+static func is_tile_powered(tile: Vector2i, buildings_list: Array, player_slot: int) -> bool:
+	for b in buildings_list:
+		if b.slot != player_slot or b.hp <= 0:
+			continue
+		var radius: int = 0
+		var b_center: Vector2i = b.grid_pos
+		if b.def_id == "hq":
+			radius = POWER_GRID_HQ_RADIUS
+			# HQ is 3x3, center at +1,+1
+			b_center = b.grid_pos + Vector2i(1, 1)
+		elif b.def_id == "pylon":
+			radius = POWER_GRID_PYLON_RADIUS
+		else:
+			continue
+		# Check with corner-cut offsets
+		var delta = tile - b_center
+		if absi(delta.x) <= radius and absi(delta.y) <= radius:
+			# Check it's not a cut corner
+			var is_cut = false
+			for sign_x in [-1, 1]:
+				for sign_y in [-1, 1]:
+					if delta == Vector2i(sign_x * radius, sign_y * radius):
+						is_cut = true
+					if delta == Vector2i(sign_x * (radius - 1), sign_y * radius):
+						is_cut = true
+					if delta == Vector2i(sign_x * radius, sign_y * (radius - 1)):
+						is_cut = true
+			if not is_cut:
+				return true
+	return false
 
 func _init() -> void:
 	_register_definitions()
@@ -126,23 +183,17 @@ func is_position_valid_for_building(
 		if Rect2i(grid_pos, def.size).intersects(camp_rect):
 			return {"valid": false, "reason": "Nie można budować w strefie neutralnej/bossa"}
 			
-	# 4. Power Grid Radius Check (Must be within HQ or Pylon range of the player)
+	# 4. Power Grid Tile Check (Must be within HQ/Pylon tile coverage of the player)
 	var in_power_range = false
-	var build_center = Vector2(grid_pos.x + def.size.x * 0.5, grid_pos.y + def.size.y * 0.5)
+	for dy in range(def.size.y):
+		for dx in range(def.size.x):
+			var check_tile = grid_pos + Vector2i(dx, dy)
+			if is_tile_powered(check_tile, building_instances, player_slot):
+				in_power_range = true
+				break
+		if in_power_range:
+			break
 	
-	for b in building_instances:
-		if b.slot != player_slot or b.hp <= 0:
-			continue
-		var b_center = Vector2(b.grid_pos.x + b.size.x * 0.5, b.grid_pos.y + b.size.y * 0.5)
-		var dist = build_center.distance_to(b_center)
-		
-		if b.def_id == "hq" and dist <= POWER_GRID_HQ_RADIUS:
-			in_power_range = true
-			break
-		elif b.def_id == "pylon" and dist <= POWER_GRID_PYLON_RADIUS:
-			in_power_range = true
-			break
-			
 	if not in_power_range:
 		return {"valid": false, "reason": "Brak zasilania sieci — postaw Pylon w pobliżu!"}
 		
@@ -153,17 +204,19 @@ func place_building(
 	grid_pos: Vector2i,
 	player_slot: int,
 	map_data: MapData,
-	economy: EconomyManager
+	economy: EconomyManager,
+	skip_validation: bool = false
 ) -> BuildingInstance:
 	var def = get_def(def_id)
 	if def == null: return null
 	
-	var validation = is_position_valid_for_building(def_id, grid_pos, player_slot, map_data)
-	if not validation.valid:
-		return null
+	if not skip_validation:
+		var validation = is_position_valid_for_building(def_id, grid_pos, player_slot, map_data)
+		if not validation.valid:
+			return null
 		
-	if not economy.spend_resources(def.cost):
-		return null
+		if not economy.spend_resources(def.cost):
+			return null
 		
 	# Replace wall if wall turret
 	if def.wall_mounted:

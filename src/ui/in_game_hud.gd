@@ -29,7 +29,6 @@ var res_iron_lbl: Label
 var res_oil_lbl: Label
 var res_redstone_lbl: Label
 var power_lbl: Label
-var player_name_lbl: Label
 var timer_lbl: Label
 var score_lbl: Label
 
@@ -40,6 +39,14 @@ var map_zoom: float = 1.0
 var is_dragging: bool = false
 var drag_start: Vector2 = Vector2.ZERO
 const TILE_PX: float = 48.0
+var minimap_canvas: Control = null
+
+# Box Selection (Marquee drag select)
+var is_box_selecting: bool = false
+var box_select_start: Vector2 = Vector2.ZERO
+var box_select_current: Vector2 = Vector2.ZERO
+var selected_units_container: PanelContainer = null
+var selected_units_vbox: VBoxContainer = null
 
 # Building Placement Mode
 var active_placing_def_id: String = ""
@@ -88,10 +95,10 @@ func _ready() -> void:
 
 func _spawn_starting_entities() -> void:
 	for b_spawn in active_map.bases:
-		# Spawn HQ on grid
-		var hq_inst = buildings.place_building("hq", b_spawn.grid_pos, b_spawn.slot, active_map, economy)
+		# Spawn HQ on grid (skip validation — no power grid exists yet)
+		var hq_inst = buildings.place_building("hq", b_spawn.grid_pos, b_spawn.slot, active_map, economy, true)
 		
-		# Spawn starting Worker Drone
+		# Spawn starting Worker Drone next to HQ
 		var spawn_pos = Vector2((b_spawn.grid_pos.x + 2.0) * TILE_PX, (b_spawn.grid_pos.y + 2.0) * TILE_PX)
 		var drone = units.spawn_unit("worker_drone", b_spawn.slot, spawn_pos)
 		if b_spawn.slot == local_slot and drone != null:
@@ -101,7 +108,28 @@ func _center_camera_on_player_base() -> void:
 	if local_slot >= 0 and local_slot < active_map.bases.size():
 		var b_pos = active_map.bases[local_slot].grid_pos
 		var vp_size = get_viewport_rect().size
-		map_camera_pos = vp_size * 0.5 - Vector2(b_pos.x * TILE_PX, b_pos.y * TILE_PX)
+		var b_center = Vector2((b_pos.x + 1.5) * TILE_PX, (b_pos.y + 1.5) * TILE_PX)
+		map_camera_pos = vp_size * 0.5 - b_center * map_zoom
+		_clamp_camera_bounds()
+
+func _clamp_camera_bounds() -> void:
+	if active_map == null: return
+	var vp_size = get_viewport_rect().size
+	const EXTRA_TILES: float = 4.0
+	var min_cam_x = vp_size.x - (active_map.width + EXTRA_TILES) * TILE_PX * map_zoom
+	var max_cam_x = EXTRA_TILES * TILE_PX * map_zoom
+	var min_cam_y = vp_size.y - (active_map.height + EXTRA_TILES) * TILE_PX * map_zoom
+	var max_cam_y = EXTRA_TILES * TILE_PX * map_zoom
+	
+	if min_cam_x > max_cam_x:
+		map_camera_pos.x = (vp_size.x - active_map.width * TILE_PX * map_zoom) * 0.5
+	else:
+		map_camera_pos.x = clampf(map_camera_pos.x, min_cam_x, max_cam_x)
+		
+	if min_cam_y > max_cam_y:
+		map_camera_pos.y = (vp_size.y - active_map.height * TILE_PX * map_zoom) * 0.5
+	else:
+		map_camera_pos.y = clampf(map_camera_pos.y, min_cam_y, max_cam_y)
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey:
@@ -135,19 +163,39 @@ func _process(delta: float) -> void:
 		units.update_units(delta, active_map, buildings.building_instances, economy, TILE_PX)
 		combat.update_combat(delta, buildings.building_instances, units.units, active_map, economy, TILE_PX)
 		_update_resource_labels()
+		_update_selected_units_ui()
 		if map_viewport: map_viewport.queue_redraw()
+		if minimap_canvas: minimap_canvas.queue_redraw()
 		
-	# Camera Pan
-	var pan_speed = 520.0 * (settings_manager.map_scroll_speed if settings_manager else 1.0)
+	# Camera Pan (Keyboard + Screen Edge Panning)
 	var move = Vector2.ZERO
 	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): move.y += 1
 	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): move.y -= 1
 	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): move.x += 1
 	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): move.x -= 1
 	
+	# Edge mouse panning (within 24px from screen border)
+	var vp_rect = get_viewport_rect()
+	var m_pos = get_viewport().get_mouse_position()
+	const EDGE_MARGIN: float = 24.0
+	
+	if m_pos.x >= 0 and m_pos.x <= EDGE_MARGIN:
+		move.x += 1
+	elif m_pos.x >= vp_rect.size.x - EDGE_MARGIN and m_pos.x <= vp_rect.size.x:
+		move.x -= 1
+		
+	if m_pos.y >= 0 and m_pos.y <= EDGE_MARGIN:
+		move.y += 1
+	elif m_pos.y >= vp_rect.size.y - EDGE_MARGIN and m_pos.y <= vp_rect.size.y:
+		move.y -= 1
+	
 	if move != Vector2.ZERO:
-		map_camera_pos += move * pan_speed * delta
+		var scroll_speed_mult = settings_manager.map_scroll_speed if settings_manager else 1.0
+		var pan_speed = 650.0 * scroll_speed_mult
+		map_camera_pos += move.normalized() * pan_speed * delta
+		_clamp_camera_bounds()
 		if map_viewport: map_viewport.queue_redraw()
+		if minimap_canvas: minimap_canvas.queue_redraw()
 
 func _build_ui() -> void:
 	# 1. 2D Map Canvas (Background)
@@ -212,13 +260,6 @@ func _build_ui() -> void:
 	power_lbl.add_theme_color_override("font_color", UITheme.COLOR_SUCCESS_GREEN)
 	res_row2.add_child(power_lbl)
 	
-	var slot_color = GameState.SLOT_COLORS[local_slot] if local_slot < GameState.SLOT_COLORS.size() else UITheme.COLOR_ACCENT_CYAN
-	player_name_lbl = Label.new()
-	player_name_lbl.text = settings_manager.player_name if settings_manager else "Pracownik"
-	player_name_lbl.add_theme_font_size_override("font_size", 15)
-	player_name_lbl.add_theme_color_override("font_color", slot_color)
-	res_row2.add_child(player_name_lbl)
-	
 	var spacer_t = Control.new()
 	spacer_t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_hbox.add_child(spacer_t)
@@ -255,8 +296,9 @@ func _build_ui() -> void:
 	# 4. IN-GAME CHAT OVERLAY & HINTS
 	_build_in_game_chat_overlay()
 	
-	# 5. BOTTOM RIGHT MINIMAP
+	# 5. BOTTOM RIGHT MINIMAP & SELECTED UNITS PANEL
 	_build_minimap_box()
+	_build_selected_units_panel()
 	
 	_update_resource_labels()
 
@@ -304,8 +346,16 @@ func _build_left_construction_panel() -> void:
 func _build_in_game_chat_overlay() -> void:
 	var chat_box = PanelContainer.new()
 	chat_box.set_anchors_preset(PRESET_BOTTOM_LEFT)
-	chat_box.position = Vector2(16, -190)
-	chat_box.custom_minimum_size = Vector2(360, 160)
+	chat_box.anchor_left = 0.0
+	chat_box.anchor_top = 1.0
+	chat_box.anchor_right = 0.0
+	chat_box.anchor_bottom = 1.0
+	chat_box.offset_left = 16.0
+	chat_box.offset_top = -200.0
+	chat_box.offset_right = 376.0
+	chat_box.offset_bottom = -38.0
+	chat_box.grow_horizontal = Control.GROW_DIRECTION_END
+	chat_box.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	
 	var sb = UITheme.create_panel_style(Color(0.02, 0.04, 0.08, 0.88), Color(0.12, 0.24, 0.38, 0.5), 4, 1, 8)
 	chat_box.add_theme_stylebox_override("panel", sb)
@@ -345,19 +395,227 @@ func _build_in_game_chat_overlay() -> void:
 	add_child(hint_lbl)
 
 func _build_minimap_box() -> void:
-	var minimap = PanelContainer.new()
-	minimap.set_anchors_preset(PRESET_BOTTOM_RIGHT)
-	minimap.position = Vector2(-170, -140)
-	minimap.custom_minimum_size = Vector2(150, 120)
-	var sb = UITheme.create_panel_style(Color(0.03, 0.05, 0.09, 0.92), UITheme.COLOR_ACCENT_CYAN.darkened(0.4), 4, 1, 4)
-	minimap.add_theme_stylebox_override("panel", sb)
-	add_child(minimap)
+	var minimap_panel = PanelContainer.new()
+	minimap_panel.set_anchors_preset(PRESET_BOTTOM_RIGHT)
+	minimap_panel.position = Vector2(-200, -210)
+	minimap_panel.custom_minimum_size = Vector2(184, 184)
+	var sb = UITheme.create_panel_style(Color(0.02, 0.04, 0.07, 0.95), UITheme.COLOR_ACCENT_CYAN, 4, 2, 6)
+	minimap_panel.add_theme_stylebox_override("panel", sb)
+	add_child(minimap_panel)
+	
+	minimap_canvas = Control.new()
+	minimap_canvas.custom_minimum_size = Vector2(172, 172)
+	minimap_canvas.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	minimap_canvas.draw.connect(_on_minimap_draw)
+	minimap_canvas.gui_input.connect(_on_minimap_gui_input)
+	minimap_panel.add_child(minimap_canvas)
+
+func _on_minimap_draw() -> void:
+	if minimap_canvas == null or active_map == null: return
+	var m_sz = minimap_canvas.get_rect().size
+	var map_w = active_map.width
+	var map_h = active_map.height
+	var cell_w = m_sz.x / float(map_w)
+	var cell_h = m_sz.y / float(map_h)
+	
+	# Background
+	minimap_canvas.draw_rect(Rect2(Vector2.ZERO, m_sz), Color(0.03, 0.05, 0.09, 1.0), true)
+	
+	# Boss Zone (Strefa Boss)
+	for c in active_map.camps:
+		if c.type == MapData.CampType.BOSS and c.hp > 0:
+			var bx = (c.grid_pos.x - 2) * cell_w
+			var by = (c.grid_pos.y - 2) * cell_h
+			minimap_canvas.draw_rect(Rect2(bx, by, cell_w * 5, cell_h * 5), Color(0.85, 0.2, 0.2, 0.45), true)
+			minimap_canvas.draw_circle(Vector2(bx + cell_w * 2.5, by + cell_h * 2.5), cell_w * 1.8, Color(0.9, 0.15, 0.15, 0.9))
+		elif c.type == MapData.CampType.CAMP and c.hp > 0:
+			var cx = c.grid_pos.x * cell_w
+			var cy = c.grid_pos.y * cell_h
+			minimap_canvas.draw_circle(Vector2(cx + cell_w * 0.5, cy + cell_h * 0.5), cell_w * 1.4, UITheme.COLOR_ACCENT_ORANGE)
+			
+	# Resources
+	for r in active_map.resources:
+		if r.amount <= 0: continue
+		var rx = r.grid_pos.x * cell_w
+		var ry = r.grid_pos.y * cell_h
+		var r_col = Color.WHITE
+		match r.type:
+			MapData.ResourceType.STONE: r_col = Color(0.65, 0.65, 0.65)
+			MapData.ResourceType.IRON: r_col = Color(0.35, 0.85, 1.0)
+			MapData.ResourceType.OIL: r_col = Color(1.0, 0.75, 0.20)
+			MapData.ResourceType.REDSTONE: r_col = Color(1.0, 0.25, 0.25)
+		minimap_canvas.draw_rect(Rect2(rx, ry, maxf(cell_w, 2.0), maxf(cell_h, 2.0)), r_col, true)
+		
+	# Bases / HQ
+	for b in active_map.bases:
+		var slot_col = GameState.SLOT_COLORS[b.slot] if b.slot < GameState.SLOT_COLORS.size() else Color.WHITE
+		var bx = b.grid_pos.x * cell_w
+		var by = b.grid_pos.y * cell_h
+		minimap_canvas.draw_rect(Rect2(bx, by, cell_w * 3, cell_h * 3), slot_col, true)
+		
+	# Buildings
+	for b in buildings.building_instances:
+		if b.hp <= 0: continue
+		var slot_col = GameState.SLOT_COLORS[b.slot] if b.slot < GameState.SLOT_COLORS.size() else Color.WHITE
+		var bx = b.grid_pos.x * cell_w
+		var by = b.grid_pos.y * cell_h
+		minimap_canvas.draw_rect(Rect2(bx, by, maxf(cell_w * b.size.x, 3.0), maxf(cell_h * b.size.y, 3.0)), slot_col, true)
+		
+	# Units
+	for u in units.units:
+		if u.hp <= 0: continue
+		var ux = (u.world_pos.x / TILE_PX) * cell_w
+		var uy = (u.world_pos.y / TILE_PX) * cell_h
+		var slot_col = GameState.SLOT_COLORS[u.slot] if u.slot < GameState.SLOT_COLORS.size() else Color.WHITE
+		minimap_canvas.draw_circle(Vector2(ux, uy), 2.5, slot_col)
+		
+	# Camera Viewport Box on Minimap (Current visible screen area)
+	var vp_size = get_viewport_rect().size
+	var top_left_world = (Vector2.ZERO - map_camera_pos) / map_zoom
+	var bottom_right_world = (vp_size - map_camera_pos) / map_zoom
+	
+	var cam_x1 = (top_left_world.x / (map_w * TILE_PX)) * m_sz.x
+	var cam_y1 = (top_left_world.y / (map_h * TILE_PX)) * m_sz.y
+	var cam_x2 = (bottom_right_world.x / (map_w * TILE_PX)) * m_sz.x
+	var cam_y2 = (bottom_right_world.y / (map_h * TILE_PX)) * m_sz.y
+	
+	var cam_rect = Rect2(cam_x1, cam_y1, maxf(cam_x2 - cam_x1, 4.0), maxf(cam_y2 - cam_y1, 4.0))
+	minimap_canvas.draw_rect(cam_rect, Color(1.0, 0.85, 0.2, 0.15), true)
+	minimap_canvas.draw_rect(cam_rect, Color(1.0, 0.90, 0.3, 0.95), false, 1.5)
+
+func _on_minimap_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton:
+		if (event.button_index == MOUSE_BUTTON_LEFT or event.button_index == MOUSE_BUTTON_RIGHT) and event.pressed:
+			_center_camera_on_minimap(event.position)
+	elif event is InputEventMouseMotion:
+		if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+			_center_camera_on_minimap(event.position)
+
+func _center_camera_on_minimap(minimap_pos: Vector2) -> void:
+	if minimap_canvas == null or active_map == null: return
+	var m_sz = minimap_canvas.get_rect().size
+	var map_world_size = Vector2(active_map.width * TILE_PX, active_map.height * TILE_PX)
+	var world_target = Vector2(
+		(minimap_pos.x / m_sz.x) * map_world_size.x,
+		(minimap_pos.y / m_sz.y) * map_world_size.y
+	)
+	var vp_size = get_viewport_rect().size
+	map_camera_pos = vp_size * 0.5 - world_target * map_zoom
+	_clamp_camera_bounds()
+	map_viewport.queue_redraw()
+	minimap_canvas.queue_redraw()
+
+func _build_selected_units_panel() -> void:
+	selected_units_container = PanelContainer.new()
+	selected_units_container.set_anchors_preset(PRESET_BOTTOM_RIGHT)
+	selected_units_container.position = Vector2(-280, -470)
+	selected_units_container.custom_minimum_size = Vector2(260, 0)
+	selected_units_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	
+	var sb = StyleBoxEmpty.new()
+	selected_units_container.add_theme_stylebox_override("panel", sb)
+	add_child(selected_units_container)
+	
+	selected_units_vbox = VBoxContainer.new()
+	selected_units_vbox.add_theme_constant_override("separation", 6)
+	selected_units_vbox.alignment = BoxContainer.ALIGNMENT_END
+	selected_units_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	selected_units_container.add_child(selected_units_vbox)
+
+func _update_selected_units_ui() -> void:
+	if selected_units_vbox == null or units == null: return
+	
+	for c in selected_units_vbox.get_children():
+		c.queue_free()
+		
+	var selected_list = units.units.filter(func(u): return u.slot == local_slot and u.selected and u.hp > 0)
+	if selected_list.is_empty():
+		return
+		
+	var display_count = mini(selected_list.size(), 5)
+	for i in range(display_count):
+		var u = selected_list[i]
+		var card = PanelContainer.new()
+		card.custom_minimum_size = Vector2(250, 56)
+		card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var sb = UITheme.create_panel_style(Color(0.04, 0.08, 0.15, 0.94), UITheme.COLOR_ACCENT_CYAN, 4, 1, 6)
+		card.add_theme_stylebox_override("panel", sb)
+		
+		var cvbox = VBoxContainer.new()
+		cvbox.add_theme_constant_override("separation", 2)
+		card.add_child(cvbox)
+		
+		# Top Row: Unit Name + HP
+		var top_row = HBoxContainer.new()
+		cvbox.add_child(top_row)
+		
+		var name_lbl = Label.new()
+		name_lbl.text = "🤖 %s #%d" % [u.name, u.instance_id]
+		name_lbl.add_theme_font_size_override("font_size", 13)
+		name_lbl.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
+		name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		top_row.add_child(name_lbl)
+		
+		var hp_lbl = Label.new()
+		hp_lbl.text = "%d/%d HP" % [u.hp, u.max_hp]
+		hp_lbl.add_theme_font_size_override("font_size", 12)
+		hp_lbl.add_theme_color_override("font_color", UITheme.COLOR_SUCCESS_GREEN if u.hp > u.max_hp * 0.4 else UITheme.COLOR_ACCENT_RED)
+		top_row.add_child(hp_lbl)
+		
+		# HP mini bar
+		var hp_bar = ProgressBar.new()
+		hp_bar.custom_minimum_size = Vector2(0, 4)
+		hp_bar.max_value = u.max_hp
+		hp_bar.value = u.hp
+		hp_bar.show_percentage = false
+		cvbox.add_child(hp_bar)
+		
+		# Status row
+		var status_text = "💤 Oczekiwanie"
+		match u.state:
+			UnitManager.UnitState.MINING:
+				var res_name = "Kamień"
+				if u.target_resource:
+					match u.target_resource.type:
+						MapData.ResourceType.STONE: res_name = "🪨 Kamień"
+						MapData.ResourceType.IRON: res_name = "⚙️ Żelazo"
+						MapData.ResourceType.OIL: res_name = "🛢️ Ropa"
+						MapData.ResourceType.REDSTONE: res_name = "🔴 Redstone"
+				status_text = "⛏️ Wydobywa %s (%d/%d)" % [res_name, u.carried_amount, u.max_carry]
+			UnitManager.UnitState.RETURNING_TO_HQ:
+				var res_name = "Surowiec"
+				match u.carried_type:
+					MapData.ResourceType.STONE: res_name = "🪨 Kamień"
+					MapData.ResourceType.IRON: res_name = "⚙️ Żelazo"
+					MapData.ResourceType.OIL: res_name = "🛢️ Ropa"
+					MapData.ResourceType.REDSTONE: res_name = "🔴 Redstone"
+				status_text = "🚚 Transport %s (%d) -> Baza" % [res_name, u.carried_amount]
+			UnitManager.UnitState.MOVING, UnitManager.UnitState.MOVING_TO_RESOURCE:
+				status_text = "🏃 Ruch do celu"
+			UnitManager.UnitState.ATTACKING:
+				status_text = "⚔️ Atakowanie wroga"
+				
+		var stat_lbl = Label.new()
+		stat_lbl.text = status_text
+		stat_lbl.add_theme_font_size_override("font_size", 12)
+		stat_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+		cvbox.add_child(stat_lbl)
+		
+		selected_units_vbox.add_child(card)
+		
+	if selected_list.size() > display_count:
+		var more_lbl = Label.new()
+		more_lbl.text = "+ %d więcej zaznaczonych" % (selected_list.size() - display_count)
+		more_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		more_lbl.add_theme_font_size_override("font_size", 12)
+		more_lbl.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
+		selected_units_vbox.add_child(more_lbl)
 
 func _update_resource_labels() -> void:
-	if res_stone_lbl: res_stone_lbl.text = "● %d/%d" % [economy.stone, economy.max_storage]
-	if res_iron_lbl: res_iron_lbl.text = "● %d/%d" % [economy.iron, economy.max_storage]
-	if res_oil_lbl: res_oil_lbl.text = "● %d/%d" % [economy.oil, economy.max_storage]
-	if res_redstone_lbl: res_redstone_lbl.text = "● %d/%d" % [economy.redstone, economy.max_storage]
+	if res_stone_lbl: res_stone_lbl.text = "🪨 %d/%d" % [economy.stone, economy.max_storage]
+	if res_iron_lbl: res_iron_lbl.text = "⚙️ %d/%d" % [economy.iron, economy.max_storage]
+	if res_oil_lbl: res_oil_lbl.text = "🛢️ %d/%d" % [economy.oil, economy.max_storage]
+	if res_redstone_lbl: res_redstone_lbl.text = "🔴 %d/%d" % [economy.redstone, economy.max_storage]
 	
 	var net_pow = economy.power_production - economy.power_consumption
 	if power_lbl:
@@ -443,10 +701,32 @@ func _on_map_draw() -> void:
 		var slot_col = GameState.SLOT_COLORS[b.slot] if b.slot < GameState.SLOT_COLORS.size() else Color.WHITE
 		map_viewport.draw_rect(b_box, slot_col, false, 1.5)
 		
-		# Draw Power Grid connector ring for Pylons and HQ
+		# Draw Power Grid coverage for Pylons and HQ (tile-based with corner cuts)
 		if b.def_id in ["hq", "pylon"]:
-			var rad = (8.0 if b.def_id == "hq" else 6.5) * tile_sz
-			map_viewport.draw_arc(b_box.get_center(), rad, 0, TAU, 32, Color(slot_col.r, slot_col.g, slot_col.b, 0.15), 1.0)
+			var radius = BuildingSystem.POWER_GRID_HQ_RADIUS if b.def_id == "hq" else BuildingSystem.POWER_GRID_PYLON_RADIUS
+			var b_center_tile = b.grid_pos + Vector2i(1, 1) if b.def_id == "hq" else b.grid_pos
+			var power_tiles = BuildingSystem.get_powered_tiles(b_center_tile, radius)
+			var power_col = Color(slot_col.r, slot_col.g, slot_col.b, 0.08)
+			var power_border_col = Color(slot_col.r, slot_col.g, slot_col.b, 0.18)
+			for pt in power_tiles:
+				var pt_pos = origin + Vector2(pt.x * tile_sz, pt.y * tile_sz)
+				var pt_rect = Rect2(pt_pos, Vector2(tile_sz, tile_sz))
+				map_viewport.draw_rect(pt_rect, power_col, true)
+			# Draw border outline of the power area
+			for pt in power_tiles:
+				var pt_v = Vector2i(pt.x, pt.y)
+				# Check each edge — if neighbor is not powered, draw edge
+				for edge_data in [
+					[Vector2i(0, -1), Vector2(0, 0), Vector2(1, 0)],  # top
+					[Vector2i(0, 1), Vector2(0, 1), Vector2(1, 1)],   # bottom
+					[Vector2i(-1, 0), Vector2(0, 0), Vector2(0, 1)],  # left
+					[Vector2i(1, 0), Vector2(1, 0), Vector2(1, 1)]    # right
+				]:
+					var neighbor = pt_v + edge_data[0]
+					if not power_tiles.has(neighbor):
+						var e1 = origin + Vector2((pt.x + edge_data[1].x) * tile_sz, (pt.y + edge_data[1].y) * tile_sz)
+						var e2 = origin + Vector2((pt.x + edge_data[2].x) * tile_sz, (pt.y + edge_data[2].y) * tile_sz)
+						map_viewport.draw_line(e1, e2, power_border_col, 1.5)
 
 	# 6. Units
 	for u in units.units:
@@ -501,6 +781,16 @@ func _on_map_draw() -> void:
 			elif not can_buy:
 				map_viewport.draw_string(ThemeDB.fallback_font, p_world + Vector2(0, -10), "Brak surowców!", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, UITheme.COLOR_ACCENT_RED)
 
+	# 9. Box Selection Marquee (Windows desktop style)
+	if is_box_selecting:
+		var min_x = minf(box_select_start.x, box_select_current.x)
+		var max_x = maxf(box_select_start.x, box_select_current.x)
+		var min_y = minf(box_select_start.y, box_select_current.y)
+		var max_y = maxf(box_select_start.y, box_select_current.y)
+		var sel_rect = Rect2(min_x, min_y, max_x - min_x, max_y - min_y)
+		map_viewport.draw_rect(sel_rect, Color(0.15, 0.55, 0.95, 0.18), true)
+		map_viewport.draw_rect(sel_rect, Color(0.35, 0.85, 1.0, 0.90), false, 1.5)
+
 func _draw_health_bar(center_pos: Vector2, hp: int, max_hp: int, bar_width: float) -> void:
 	var bar_h = 5.0
 	var bar_rect = Rect2(center_pos - Vector2(bar_width * 0.5, bar_h * 0.5), Vector2(bar_width, bar_h))
@@ -523,6 +813,10 @@ func _on_map_gui_input(event: InputEvent) -> void:
 		hover_grid_pos = Vector2i(int(floor(m_local.x / tile_sz)), int(floor(m_local.y / tile_sz)))
 		if is_dragging:
 			map_camera_pos += event.relative
+			_clamp_camera_bounds()
+			if minimap_canvas: minimap_canvas.queue_redraw()
+		if is_box_selecting:
+			box_select_current = event.position
 		map_viewport.queue_redraw()
 		
 	elif event is InputEventMouseButton:
@@ -530,29 +824,66 @@ func _on_map_gui_input(event: InputEvent) -> void:
 			is_dragging = event.pressed
 			drag_start = event.position
 			
-		elif event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-			if not active_placing_def_id.is_empty():
-				# Attempt building placement
-				var placed = buildings.place_building(active_placing_def_id, hover_grid_pos, local_slot, active_map, economy)
-				if placed != null:
-					in_game_chat_log.append_text("[color=#00f0ff]Postawiono: [b]%s[/b][/color]\n" % placed.name)
-					active_placing_def_id = "" # Reset
-					map_viewport.queue_redraw()
-			elif is_demolish_mode:
-				# Attempt demolition
-				if buildings.demolish_building_at(hover_grid_pos, local_slot, economy):
-					in_game_chat_log.append_text("[color=#ff4655]Zniszczono budynek (Zwrócono 50% surowców)[/color]\n")
-					is_demolish_mode = false
+		elif event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed:
+				if not active_placing_def_id.is_empty():
+					# Attempt building placement
+					var placed = buildings.place_building(active_placing_def_id, hover_grid_pos, local_slot, active_map, economy)
+					if placed != null:
+						in_game_chat_log.append_text("[color=#00f0ff]Postawiono: [b]%s[/b][/color]\n" % placed.name)
+						active_placing_def_id = "" # Reset
+						map_viewport.queue_redraw()
+				elif is_demolish_mode:
+					# Attempt demolition
+					if buildings.demolish_building_at(hover_grid_pos, local_slot, economy):
+						in_game_chat_log.append_text("[color=#ff4655]Zniszczono budynek (Zwrócono 50% surowców)[/color]\n")
+						is_demolish_mode = false
+						map_viewport.queue_redraw()
+				else:
+					# Start box selection
+					is_box_selecting = true
+					box_select_start = event.position
+					box_select_current = event.position
 					map_viewport.queue_redraw()
 			else:
-				# Unit selection
-				var click_world = (event.position - map_camera_pos) / map_zoom
-				for u in units.units:
-					if u.slot == local_slot and u.world_pos.distance_to(click_world) < 28.0:
-						u.selected = true
+				# LMB Released - finalize selection
+				if is_box_selecting:
+					is_box_selecting = false
+					box_select_current = event.position
+					var box_w = absf(box_select_current.x - box_select_start.x)
+					var box_h = absf(box_select_current.y - box_select_start.y)
+					
+					if box_w < 8.0 and box_h < 8.0:
+						# Single-click selection
+						var click_world = (event.position - map_camera_pos) / map_zoom
+						var closest_u = null
+						var min_d = 32.0
+						for u in units.units:
+							if u.slot == local_slot and u.hp > 0:
+								var d = u.world_pos.distance_to(click_world)
+								if d < min_d:
+									min_d = d
+									closest_u = u
+						for u in units.units:
+							if u.slot == local_slot:
+								u.selected = (u == closest_u)
 					else:
-						u.selected = false
-				map_viewport.queue_redraw()
+						# Box selection (marquee drag)
+						var min_x = minf(box_select_start.x, box_select_current.x)
+						var max_x = maxf(box_select_start.x, box_select_current.x)
+						var min_y = minf(box_select_start.y, box_select_current.y)
+						var max_y = maxf(box_select_start.y, box_select_current.y)
+						var sel_rect = Rect2(min_x, min_y, max_x - min_x, max_y - min_y)
+						
+						for u in units.units:
+							if u.slot == local_slot and u.hp > 0:
+								var u_screen = map_camera_pos + u.world_pos * map_zoom
+								u.selected = sel_rect.has_point(u_screen)
+							else:
+								u.selected = false
+								
+					map_viewport.queue_redraw()
+					_update_selected_units_ui()
 				
 		elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 			if not active_placing_def_id.is_empty() or is_demolish_mode:
@@ -596,11 +927,22 @@ func _on_map_gui_input(event: InputEvent) -> void:
 			map_viewport.queue_redraw()
 			
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			map_zoom = clampf(map_zoom + 0.1, 0.4, 2.5)
-			map_viewport.queue_redraw()
+			_zoom_at_point(event.position, 0.12)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			map_zoom = clampf(map_zoom - 0.1, 0.4, 2.5)
-			map_viewport.queue_redraw()
+			_zoom_at_point(event.position, -0.12)
+
+func _zoom_at_point(screen_pos: Vector2, zoom_delta: float) -> void:
+	var old_zoom = map_zoom
+	var new_zoom = clampf(map_zoom + zoom_delta, 0.45, 2.5)
+	if is_equal_approx(old_zoom, new_zoom): return
+	
+	var world_at_mouse = (screen_pos - map_camera_pos) / old_zoom
+	map_zoom = new_zoom
+	map_camera_pos = screen_pos - world_at_mouse * new_zoom
+	
+	_clamp_camera_bounds()
+	map_viewport.queue_redraw()
+	if minimap_canvas: minimap_canvas.queue_redraw()
 
 func _on_build_selected(def_id: String) -> void:
 	if def_id == "DEMOLISH":

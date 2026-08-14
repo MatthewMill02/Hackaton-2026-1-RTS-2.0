@@ -6,7 +6,7 @@ const SAVE_PATH: String = "user://settings.cfg"
 
 var player_name: String = ""
 var map_scroll_speed: float = 1.0
-var window_mode: int = 0 # 0: Fullscreen (F11), 1: Maximized, 2: Windowed 1920x1080, 3: Windowed 1280x720
+var window_mode: int = 0 # 0: Fullscreen (Mouse Locked), 1: Borderless, 2: Maximized, 3: Windowed 1920x1080, 4: Windowed 1280x720
 var custom_host_ip: String = ""
 var custom_port: int = GameState.DEFAULT_PORT
 
@@ -54,24 +54,33 @@ func save_settings() -> void:
 
 func apply_display_mode() -> void:
 	match window_mode:
-		0: # Fullscreen
+		0: # Fullscreen (Exclusive with Mouse Confined/Locked inside window)
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN)
+			Input.mouse_mode = Input.MOUSE_MODE_CONFINED
+		1: # Borderless (Borderless Windowed)
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
-		1: # Maximized
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		2: # Maximized
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MAXIMIZED)
-		2: # 1920x1080 Windowed
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		3: # 1920x1080 Windowed
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 			DisplayServer.window_set_size(Vector2i(1920, 1080))
-		3: # 1280x720 Windowed
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		4: # 1280x720 Windowed
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 			DisplayServer.window_set_size(Vector2i(1280, 720))
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 func toggle_fullscreen() -> void:
 	var current_mode = DisplayServer.window_get_mode()
 	if current_mode == DisplayServer.WINDOW_MODE_FULLSCREEN or current_mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN:
-		window_mode = 1 # Return to maximized / windowed
+		window_mode = 3 # Return to 1920x1080 windowed
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 		DisplayServer.window_set_size(Vector2i(1920, 1080))
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	else:
-		window_mode = 0 # Fullscreen
-		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+		window_mode = 0 # Fullscreen with mouse lock
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN)
+		Input.mouse_mode = Input.MOUSE_MODE_CONFINED
 	save_settings()

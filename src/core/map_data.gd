@@ -100,9 +100,9 @@ static func from_dict(d: Dictionary) -> MapData:
 	# Re-create bases
 	md.bases.clear()
 	md.bases.append(BaseSpawn.new(0, Vector2i(5, 5)))
-	md.bases.append(BaseSpawn.new(1, Vector2i(md.width - 6, 5)))
-	md.bases.append(BaseSpawn.new(2, Vector2i(5, md.height - 6)))
-	md.bases.append(BaseSpawn.new(3, Vector2i(md.width - 6, md.height - 6)))
+	md.bases.append(BaseSpawn.new(1, Vector2i(md.width - 8, 5)))
+	md.bases.append(BaseSpawn.new(2, Vector2i(5, md.height - 8)))
+	md.bases.append(BaseSpawn.new(3, Vector2i(md.width - 8, md.height - 8)))
 	
 	md.resources.clear()
 	for r in d.get("resources", []):

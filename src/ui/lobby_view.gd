@@ -304,20 +304,19 @@ func _build_map_interactive_elements(container: Control) -> void:
 	base_buttons.clear()
 	base_player_lbls.clear()
 	
-	var base_configs = [
-		{"name": "B1", "anchor_x": 0.12, "anchor_y": 0.14, "color": GameState.SLOT_COLORS[0], "desc": "Niebieska"},
-		{"name": "B2", "anchor_x": 0.88, "anchor_y": 0.14, "color": GameState.SLOT_COLORS[1], "desc": "Czerwona"},
-		{"name": "B3", "anchor_x": 0.12, "anchor_y": 0.86, "color": GameState.SLOT_COLORS[2], "desc": "Zielona"},
-		{"name": "B4", "anchor_x": 0.88, "anchor_y": 0.86, "color": GameState.SLOT_COLORS[3], "desc": "Żółta"}
-	]
-	
-	for i in range(base_configs.size()):
-		var cfg = base_configs[i]
+	# Base buttons will be repositioned in _on_map_canvas_draw via deferred call
+	for i in range(4):
+		var slot_col = GameState.SLOT_COLORS[i]
 		var base_btn = Button.new()
-		base_btn.custom_minimum_size = Vector2(96, 76)
+		base_btn.name = "BaseBtn%d" % i
+		base_btn.custom_minimum_size = Vector2(10, 10)
 		base_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		base_btn.mouse_filter = Control.MOUSE_FILTER_STOP
 		
-		var sb_base = UITheme.create_panel_style(Color(0.06, 0.10, 0.16, 0.92), cfg.color, 4, 3, 6)
+		var sb_base = StyleBoxFlat.new()
+		sb_base.bg_color = Color(0, 0, 0, 0.01) # Nearly transparent, visual drawn on canvas
+		sb_base.border_color = Color(0, 0, 0, 0) # No border, drawn by canvas
+		sb_base.set_corner_radius_all(0)
 		base_btn.add_theme_stylebox_override("normal", sb_base)
 		base_btn.add_theme_stylebox_override("hover", sb_base)
 		base_btn.add_theme_stylebox_override("pressed", sb_base)
@@ -327,45 +326,66 @@ func _build_map_interactive_elements(container: Control) -> void:
 			slot_selected.emit(idx)
 		)
 		
-		var bvbox = VBoxContainer.new()
-		bvbox.alignment = BoxContainer.ALIGNMENT_CENTER
-		bvbox.add_theme_constant_override("separation", 2)
-		base_btn.add_child(bvbox)
-		
-		var b_title = Label.new()
-		b_title.text = cfg.name + " (" + cfg.desc + ")"
-		b_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		b_title.add_theme_font_size_override("font_size", 16)
-		b_title.add_theme_color_override("font_color", cfg.color)
-		bvbox.add_child(b_title)
-		
-		var b_user = Label.new()
-		b_user.text = "[KLIKNIJ ABY WYBRAĆ]"
-		b_user.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		b_user.add_theme_font_size_override("font_size", 12)
-		b_user.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
-		bvbox.add_child(b_user)
-		base_player_lbls.append(b_user)
-		
 		container.add_child(base_btn)
 		base_buttons.append(base_btn)
 		
-		base_btn.set_anchors_preset(PRESET_CENTER)
-		_position_base_button(base_btn, cfg.anchor_x, cfg.anchor_y)
+		# Player name label floating on map
+		var b_user = Label.new()
+		b_user.text = "[KLIKNIJ ABY WYBRAĆ]"
+		b_user.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		b_user.add_theme_font_size_override("font_size", 14)
+		b_user.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+		container.add_child(b_user)
+		base_player_lbls.append(b_user)
 
-func _position_base_button(btn: Button, ax: float, ay: float) -> void:
-	btn.anchor_left = ax
-	btn.anchor_top = ay
-	btn.anchor_right = ax
-	btn.anchor_bottom = ay
-	btn.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	btn.grow_vertical = Control.GROW_DIRECTION_BOTH
+func _position_base_buttons_on_map() -> void:
+	# Called after drawing, to position buttons precisely over base areas
+	if active_map == null or map_canvas == null:
+		return
+	var rect = map_canvas.get_rect()
+	var w = rect.size.x
+	var h = rect.size.y
+	var map_w = active_map.width
+	var map_h = active_map.height
+	var margin_px = 30.0
+	var avail_w = w - margin_px * 2
+	var avail_h = h - margin_px * 2
+	var cell_size = minf(avail_w / float(map_w), avail_h / float(map_h))
+	var origin_x = margin_px + (avail_w - cell_size * map_w) * 0.5
+	var origin_y = margin_px + (avail_h - cell_size * map_h) * 0.5
+	
+	for i in range(mini(active_map.bases.size(), base_buttons.size())):
+		var b_spawn = active_map.bases[i]
+		var hq_radius = BuildingSystem.POWER_GRID_HQ_RADIUS
+		var hq_center = b_spawn.grid_pos  # HQ top-left, center at +1,+1
+		var center_tile = hq_center + Vector2i(1, 1)
+		
+		# Button covers the power field area
+		var area_left = (center_tile.x - hq_radius) * cell_size + origin_x
+		var area_top = (center_tile.y - hq_radius) * cell_size + origin_y
+		var area_size = (hq_radius * 2 + 1) * cell_size
+		
+		base_buttons[i].position = Vector2(area_left, area_top)
+		base_buttons[i].size = Vector2(area_size, area_size)
+		
+		# Position label below the HQ
+		var lbl_x = origin_x + (hq_center.x + 1.5) * cell_size
+		var lbl_y = origin_y + (hq_center.y + 3.5) * cell_size
+		base_player_lbls[i].position = Vector2(lbl_x - 80, lbl_y)
+		base_player_lbls[i].size = Vector2(160, 24)
 
 func _build_map_chat_overlay(container: Control) -> void:
 	var chat_box = PanelContainer.new()
-	chat_box.custom_minimum_size = Vector2(400, 190)
 	chat_box.set_anchors_preset(PRESET_BOTTOM_LEFT)
-	chat_box.position = Vector2(24, -214)
+	chat_box.anchor_left = 0.0
+	chat_box.anchor_top = 1.0
+	chat_box.anchor_right = 0.0
+	chat_box.anchor_bottom = 1.0
+	chat_box.offset_left = 20.0
+	chat_box.offset_top = -190.0
+	chat_box.offset_right = 380.0
+	chat_box.offset_bottom = -20.0
+	chat_box.grow_horizontal = Control.GROW_DIRECTION_END
 	chat_box.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	
 	var sb = UITheme.create_panel_style(Color(0.03, 0.06, 0.10, 0.90), Color(0.14, 0.26, 0.40, 0.6), 4, 1, 10)
@@ -433,8 +453,60 @@ func _on_map_canvas_draw() -> void:
 	for gy in range(map_h + 1):
 		var ly = origin_y + gy * cell_size
 		map_canvas.draw_line(Vector2(origin_x, ly), Vector2(origin_x + map_w * cell_size, ly), grid_col, 1.0)
+	
+	# 3. Draw BASE POWER FIELDS + HQ preview for each base
+	for i in range(active_map.bases.size()):
+		var b_spawn = active_map.bases[i]
+		var slot_col = GameState.SLOT_COLORS[i] if i < GameState.SLOT_COLORS.size() else Color.WHITE
+		var hq_center_tile = b_spawn.grid_pos + Vector2i(1, 1)
+		var hq_radius = BuildingSystem.POWER_GRID_HQ_RADIUS
 		
-	# 3. Draw Center Boss Area (Strefa Boss)
+		# Draw power coverage tiles (rounded-square)
+		var power_tiles = BuildingSystem.get_powered_tiles(hq_center_tile, hq_radius)
+		var power_fill = Color(slot_col.r, slot_col.g, slot_col.b, 0.06)
+		for pt in power_tiles:
+			var pt_rect = Rect2(origin_x + pt.x * cell_size, origin_y + pt.y * cell_size, cell_size, cell_size)
+			map_canvas.draw_rect(pt_rect, power_fill, true)
+		
+		# Draw power field border (only outer edges)
+		var power_edge_col = Color(slot_col.r, slot_col.g, slot_col.b, 0.3)
+		for pt in power_tiles:
+			for edge_data in [
+				[Vector2i(0, -1), Vector2(0, 0), Vector2(1, 0)],
+				[Vector2i(0, 1), Vector2(0, 1), Vector2(1, 1)],
+				[Vector2i(-1, 0), Vector2(0, 0), Vector2(0, 1)],
+				[Vector2i(1, 0), Vector2(1, 0), Vector2(1, 1)]
+			]:
+				var neighbor = Vector2i(pt.x, pt.y) + edge_data[0]
+				if not power_tiles.has(neighbor):
+					var e1 = Vector2(origin_x + (pt.x + edge_data[1].x) * cell_size, origin_y + (pt.y + edge_data[1].y) * cell_size)
+					var e2 = Vector2(origin_x + (pt.x + edge_data[2].x) * cell_size, origin_y + (pt.y + edge_data[2].y) * cell_size)
+					map_canvas.draw_line(e1, e2, power_edge_col, 1.5)
+		
+		# Draw HQ building preview (3x3 block)
+		var hq_x = origin_x + b_spawn.grid_pos.x * cell_size
+		var hq_y = origin_y + b_spawn.grid_pos.y * cell_size
+		var hq_rect = Rect2(hq_x, hq_y, cell_size * 3, cell_size * 3)
+		
+		# HQ body fill
+		map_canvas.draw_rect(hq_rect, Color(slot_col.r * 0.3, slot_col.g * 0.3, slot_col.b * 0.3, 0.7), true)
+		map_canvas.draw_rect(hq_rect, slot_col, false, 2.0)
+		
+		# HQ inner detail (cross pattern)
+		var hq_cx = hq_x + cell_size * 1.5
+		var hq_cy = hq_y + cell_size * 1.5
+		map_canvas.draw_rect(Rect2(hq_cx - cell_size * 0.4, hq_y + 2, cell_size * 0.8, cell_size * 3 - 4), Color(slot_col.r, slot_col.g, slot_col.b, 0.25), true)
+		map_canvas.draw_rect(Rect2(hq_x + 2, hq_cy - cell_size * 0.4, cell_size * 3 - 4, cell_size * 0.8), Color(slot_col.r, slot_col.g, slot_col.b, 0.25), true)
+		
+		# HQ label
+		var base_names = ["B1", "B2", "B3", "B4"]
+		var label_text = base_names[i] if i < base_names.size() else "B?"
+		map_canvas.draw_string(ThemeDB.fallback_font, Vector2(hq_cx - 10, hq_cy + 6), label_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 16, slot_col)
+		
+		# "KWATERA" label above HQ
+		map_canvas.draw_string(ThemeDB.fallback_font, Vector2(hq_cx - 30, hq_y - 6), "KWATERA", HORIZONTAL_ALIGNMENT_CENTER, -1, 12, Color(slot_col.r, slot_col.g, slot_col.b, 0.6))
+	
+	# 4. Draw Center Boss Area (Strefa Boss)
 	var boss_node = null
 	for c in active_map.camps:
 		if c.type == MapData.CampType.BOSS:
@@ -452,14 +524,14 @@ func _on_map_canvas_draw() -> void:
 		map_canvas.draw_string(ThemeDB.fallback_font, b_center + Vector2(-24, -14), "BOSS", HORIZONTAL_ALIGNMENT_CENTER, -1, 14, UITheme.COLOR_TEXT_MUTED)
 		map_canvas.draw_string(ThemeDB.fallback_font, b_center + Vector2(-30, 20), "Strefa", HORIZONTAL_ALIGNMENT_CENTER, -1, 16, UITheme.COLOR_ACCENT_CYAN)
 		
-	# 4. Draw Neutral Camps (OBÓZ)
+	# 5. Draw Neutral Camps (OBÓZ)
 	for c in active_map.camps:
 		if c.type == MapData.CampType.CAMP:
 			var c_center = Vector2(origin_x + (c.grid_pos.x + 0.5) * cell_size, origin_y + (c.grid_pos.y + 0.5) * cell_size)
 			map_canvas.draw_circle(c_center, cell_size * 0.9, UITheme.COLOR_ACCENT_ORANGE)
 			map_canvas.draw_string(ThemeDB.fallback_font, c_center + Vector2(-22, -12), "OBÓZ", HORIZONTAL_ALIGNMENT_CENTER, -1, 14, UITheme.COLOR_TEXT_MUTED)
 			
-	# 5. Draw Generated Resource Nodes (Stone, Iron, Oil, Redstone)
+	# 6. Draw Generated Resource Nodes (Stone, Iron, Oil, Redstone)
 	for r in active_map.resources:
 		var rx = origin_x + r.grid_pos.x * cell_size
 		var ry = origin_y + r.grid_pos.y * cell_size
@@ -475,6 +547,9 @@ func _on_map_canvas_draw() -> void:
 		map_canvas.draw_rect(r_rect, r_col.darkened(0.5), true)
 		map_canvas.draw_rect(r_rect, r_col, false, 1.0)
 		map_canvas.draw_circle(r_rect.get_center(), cell_size * 0.35, r_col)
+	
+	# Reposition base buttons on top of map
+	_position_base_buttons_on_map()
 
 # ==============================================================================
 # State Updates & Synchronization
