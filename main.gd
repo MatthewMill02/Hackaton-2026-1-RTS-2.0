@@ -3,6 +3,7 @@ extends Node
 
 var settings_manager: SettingsManager
 var network_manager: NetworkManager
+var ui_layer: CanvasLayer = null
 var current_view: Control = null
 var current_phase: GameState.GamePhase = GameState.GamePhase.MENU
 
@@ -13,7 +14,12 @@ func _ready() -> void:
 	settings_manager = SettingsManager.new()
 	settings_manager.apply_display_mode()
 	
-	# 2. Instantiate Network Manager
+	# 2. Setup UI Canvas Layer for automatic full viewport scaling
+	ui_layer = CanvasLayer.new()
+	ui_layer.name = "UILayer"
+	add_child(ui_layer)
+	
+	# 3. Instantiate Network Manager
 	network_manager = NetworkManager.new()
 	network_manager.name = "NetworkManager"
 	add_child(network_manager)
@@ -26,7 +32,7 @@ func _ready() -> void:
 	network_manager.session_disconnected.connect(_on_session_disconnected)
 	network_manager.connection_status_changed.connect(_on_connection_status_changed)
 	
-	# 3. Display Initial Overwatch-style Main Menu
+	# 4. Display Initial Overwatch-style Main Menu
 	show_menu_view()
 
 # ==============================================================================
@@ -41,7 +47,7 @@ func show_menu_view(status_msg: String = "", is_error: bool = false) -> void:
 	menu.host_requested.connect(_on_host_requested)
 	menu.join_by_code_requested.connect(_on_join_by_code_requested)
 	menu.join_direct_requested.connect(_on_join_direct_requested)
-	add_child(menu)
+	ui_layer.add_child(menu)
 	current_view = menu
 	
 	if not status_msg.is_empty():
@@ -58,7 +64,7 @@ func show_lobby_view(is_host: bool) -> void:
 	lobby.chat_submitted.connect(_on_chat_submitted)
 	lobby.start_game_requested.connect(_on_start_game_requested)
 	
-	add_child(lobby)
+	ui_layer.add_child(lobby)
 	current_view = lobby
 	
 	lobby.update_lobby_state(
@@ -80,7 +86,7 @@ func show_game_view() -> void:
 		network_manager.send_chat(msg)
 	)
 	
-	add_child(hud)
+	ui_layer.add_child(hud)
 	current_view = hud
 
 func _clear_current_view() -> void:

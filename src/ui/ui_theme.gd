@@ -120,15 +120,31 @@ static func create_badge(text: String, bg_color: Color, text_color: Color = Colo
 	return container
 
 static func load_texture_safe(res_path: String) -> Texture2D:
+	# 1. Try standard ResourceLoader
 	if ResourceLoader.exists(res_path):
 		var res = load(res_path)
 		if res is Texture2D:
 			return res
 			
+	# 2. Try Image.load_from_file with global path
 	var global_path = ProjectSettings.globalize_path(res_path)
 	if FileAccess.file_exists(global_path):
-		var img = Image.new()
-		var err = img.load(global_path)
-		if err == OK:
+		var img = Image.load_from_file(global_path)
+		if img != null and not img.is_empty():
 			return ImageTexture.create_from_image(img)
+			
+		# 3. Binary PNG buffer decode fallback
+		var file = FileAccess.open(global_path, FileAccess.READ)
+		if file != null:
+			var buffer = file.get_buffer(file.get_length())
+			var raw_img = Image.new()
+			var err = raw_img.load_png_from_buffer(buffer)
+			if err == OK and not raw_img.is_empty():
+				return ImageTexture.create_from_image(raw_img)
+				
+	# 4. Try direct res:// path with Image.load_from_file
+	var res_img = Image.load_from_file(res_path)
+	if res_img != null and not res_img.is_empty():
+		return ImageTexture.create_from_image(res_img)
+		
 	return null

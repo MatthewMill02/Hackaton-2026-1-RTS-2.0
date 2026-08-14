@@ -47,12 +47,14 @@ func _load_banner_textures() -> void:
 		banner_textures.append(tex1)
 	if tex2 != null:
 		banner_textures.append(tex2)
+	print("[MenuView] Loaded background banner textures: ", banner_textures.size())
 
 func _build_ui() -> void:
 	# Fallback dark background
 	var bg_fallback = ColorRect.new()
 	bg_fallback.color = Color(0.02, 0.04, 0.08, 1.0)
 	bg_fallback.set_anchors_preset(PRESET_FULL_RECT)
+	bg_fallback.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg_fallback)
 	
 	# 1. Background Layers for smooth crossfade
@@ -60,6 +62,7 @@ func _build_ui() -> void:
 	banner_rect1.set_anchors_preset(PRESET_FULL_RECT)
 	banner_rect1.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	banner_rect1.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	banner_rect1.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if not banner_textures.is_empty():
 		banner_rect1.texture = banner_textures[0]
 	add_child(banner_rect1)
@@ -68,6 +71,7 @@ func _build_ui() -> void:
 	banner_rect2.set_anchors_preset(PRESET_FULL_RECT)
 	banner_rect2.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	banner_rect2.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	banner_rect2.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	banner_rect2.modulate = Color(1, 1, 1, 0)
 	if banner_textures.size() >= 2:
 		banner_rect2.texture = banner_textures[1]
@@ -76,7 +80,8 @@ func _build_ui() -> void:
 	# Vignette overlay
 	var vignette = ColorRect.new()
 	vignette.set_anchors_preset(PRESET_FULL_RECT)
-	vignette.color = Color(0.01, 0.03, 0.07, 0.40)
+	vignette.color = Color(0.01, 0.03, 0.07, 0.35)
+	vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(vignette)
 	
 	# 2. Main Layout Container (Single MarginContainer -> Single VBoxContainer)
