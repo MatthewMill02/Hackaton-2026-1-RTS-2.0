@@ -118,3 +118,17 @@ static func create_badge(text: String, bg_color: Color, text_color: Color = Colo
 	lbl.add_theme_color_override("font_color", text_color)
 	container.add_child(lbl)
 	return container
+
+static func load_texture_safe(res_path: String) -> Texture2D:
+	if ResourceLoader.exists(res_path):
+		var res = load(res_path)
+		if res is Texture2D:
+			return res
+			
+	var global_path = ProjectSettings.globalize_path(res_path)
+	if FileAccess.file_exists(global_path):
+		var img = Image.new()
+		var err = img.load(global_path)
+		if err == OK:
+			return ImageTexture.create_from_image(img)
+	return null

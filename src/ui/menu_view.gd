@@ -1,4 +1,4 @@
-# Overwatch / Factory of War Main Menu View with Background Slides
+# Overwatch / Factory of War Main Menu View with Background Slides & Clean Layout
 class_name MenuView
 extends Control
 
@@ -10,13 +10,14 @@ signal open_settings_requested()
 var network_manager: NetworkManager
 var settings_manager: SettingsManager
 
-# UI Elements
+# Background Animation
 var banner_rect1: TextureRect
 var banner_rect2: TextureRect
 var banner_timer: float = 0.0
 var active_banner_idx: int = 0
 var banner_textures: Array[Texture2D] = []
 
+# UI References
 var profile_name_lbl: Label
 var status_lbl: Label
 
@@ -33,21 +34,27 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if banner_textures.size() >= 2:
 		banner_timer += delta
-		if banner_timer >= 7.0:
+		if banner_timer >= 6.0:
 			banner_timer = 0.0
 			_crossfade_banner()
 
 func _load_banner_textures() -> void:
 	banner_textures.clear()
-	var path1 = "res://public/ui/menu_banner.png"
-	var path2 = "res://public/ui/menu_banner_cyber.png"
+	var tex1 = UITheme.load_texture_safe("res://public/ui/menu_banner.png")
+	var tex2 = UITheme.load_texture_safe("res://public/ui/menu_banner_cyber.png")
 	
-	if ResourceLoader.exists(path1):
-		banner_textures.append(load(path1))
-	if ResourceLoader.exists(path2):
-		banner_textures.append(load(path2))
+	if tex1 != null:
+		banner_textures.append(tex1)
+	if tex2 != null:
+		banner_textures.append(tex2)
 
 func _build_ui() -> void:
+	# Fallback dark background
+	var bg_fallback = ColorRect.new()
+	bg_fallback.color = Color(0.02, 0.04, 0.08, 1.0)
+	bg_fallback.set_anchors_preset(PRESET_FULL_RECT)
+	add_child(bg_fallback)
+	
 	# 1. Background Layers for smooth crossfade
 	banner_rect1 = TextureRect.new()
 	banner_rect1.set_anchors_preset(PRESET_FULL_RECT)
@@ -66,34 +73,40 @@ func _build_ui() -> void:
 		banner_rect2.texture = banner_textures[1]
 	add_child(banner_rect2)
 	
-	# Dark cyber vignette overlay
+	# Vignette overlay
 	var vignette = ColorRect.new()
 	vignette.set_anchors_preset(PRESET_FULL_RECT)
-	vignette.color = Color(0.02, 0.05, 0.10, 0.45)
+	vignette.color = Color(0.01, 0.03, 0.07, 0.40)
 	add_child(vignette)
 	
-	# Margin Layout for UI Controls
+	# 2. Main Layout Container (Single MarginContainer -> Single VBoxContainer)
 	var margin = MarginContainer.new()
 	margin.set_anchors_preset(PRESET_FULL_RECT)
-	margin.add_theme_constant_override("margin_left", 60)
-	margin.add_theme_constant_override("margin_right", 60)
-	margin.add_theme_constant_override("margin_top", 40)
-	margin.add_theme_constant_override("margin_bottom", 30)
+	margin.add_theme_constant_override("margin_left", 70)
+	margin.add_theme_constant_override("margin_right", 70)
+	margin.add_theme_constant_override("margin_top", 45)
+	margin.add_theme_constant_override("margin_bottom", 35)
 	add_child(margin)
 	
-	# Top Bar (Title on Left, Profile on Right)
+	var main_vbox = VBoxContainer.new()
+	main_vbox.set_anchors_preset(PRESET_FULL_RECT)
+	main_vbox.add_theme_constant_override("separation", 0)
+	margin.add_child(main_vbox)
+	
+	# --- TOP ROW (Title on Left, Profile on Right) ---
 	var top_hbox = HBoxContainer.new()
-	top_hbox.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	margin.add_child(top_hbox)
+	top_hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	main_vbox.add_child(top_hbox)
 	
 	# Top Left: Title
 	var title_vbox = VBoxContainer.new()
 	title_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_vbox.add_theme_constant_override("separation", 2)
 	top_hbox.add_child(title_vbox)
 	
 	var title_lbl = Label.new()
 	title_lbl.text = "FACTORY OF WAR"
-	title_lbl.add_theme_font_size_override("font_size", 42)
+	title_lbl.add_theme_font_size_override("font_size", 44)
 	title_lbl.add_theme_color_override("font_color", Color.WHITE)
 	title_vbox.add_child(title_lbl)
 	
@@ -106,12 +119,12 @@ func _build_ui() -> void:
 	# Top Right: Profile Badge
 	var profile_btn = Button.new()
 	var profile_sb = StyleBoxFlat.new()
-	profile_sb.bg_color = Color(0.06, 0.10, 0.18, 0.90)
+	profile_sb.bg_color = Color(0.05, 0.08, 0.15, 0.92)
 	profile_sb.border_color = UITheme.COLOR_ACCENT_ORANGE
-	profile_sb.border_width_right = 4
+	profile_sb.border_width_right = 5
 	profile_sb.set_corner_radius_all(2)
-	profile_sb.content_margin_left = 16
-	profile_sb.content_margin_right = 16
+	profile_sb.content_margin_left = 18
+	profile_sb.content_margin_right = 18
 	profile_sb.content_margin_top = 8
 	profile_sb.content_margin_bottom = 8
 	profile_btn.add_theme_stylebox_override("normal", profile_sb)
@@ -122,7 +135,7 @@ func _build_ui() -> void:
 	top_hbox.add_child(profile_btn)
 	
 	var prof_vbox = VBoxContainer.new()
-	prof_vbox.add_theme_constant_override("separation", 1)
+	prof_vbox.add_theme_constant_override("separation", 2)
 	profile_btn.add_child(prof_vbox)
 	
 	profile_name_lbl = Label.new()
@@ -137,28 +150,32 @@ func _build_ui() -> void:
 	prof_hint.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_ORANGE)
 	prof_vbox.add_child(prof_hint)
 	
-	# Middle/Left: Action Menu Buttons (Stacked vertically)
+	# --- SPACER BETWEEN TITLE AND MENU BUTTONS ---
+	var spacer_top = Control.new()
+	spacer_top.custom_minimum_size = Vector2(0, 70)
+	main_vbox.add_child(spacer_top)
+	
+	# --- ACTION MENU BUTTONS ---
 	var menu_vbox = VBoxContainer.new()
 	menu_vbox.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	menu_vbox.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	menu_vbox.add_theme_constant_override("separation", 18)
-	margin.add_child(menu_vbox)
+	menu_vbox.add_theme_constant_override("separation", 20)
+	main_vbox.add_child(menu_vbox)
 	
-	# STWÓRZ GRĘ
+	# 1. STWÓRZ GRĘ
 	var btn_host = Button.new()
 	btn_host.text = "STWÓRZ GRĘ"
-	UITheme.style_menu_action_button(btn_host, 28)
+	UITheme.style_menu_action_button(btn_host, 32)
 	btn_host.pressed.connect(_on_create_game_pressed)
 	menu_vbox.add_child(btn_host)
 	
-	# DOŁĄCZ DO GRY
+	# 2. DOŁĄCZ DO GRY
 	var btn_join = Button.new()
 	btn_join.text = "DOŁĄCZ DO GRY"
-	UITheme.style_menu_action_button(btn_join, 28)
+	UITheme.style_menu_action_button(btn_join, 32)
 	btn_join.pressed.connect(_on_join_game_pressed)
 	menu_vbox.add_child(btn_join)
 	
-	# USTAWIENIA
+	# 3. USTAWIENIA
 	var btn_settings = Button.new()
 	btn_settings.text = "USTAWIENIA"
 	UITheme.style_menu_action_button(btn_settings, 24)
@@ -166,20 +183,24 @@ func _build_ui() -> void:
 	btn_settings.pressed.connect(_on_settings_pressed)
 	menu_vbox.add_child(btn_settings)
 	
-	# Status label
+	# Status message
 	status_lbl = Label.new()
 	status_lbl.text = ""
 	status_lbl.add_theme_font_size_override("font_size", 14)
 	status_lbl.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
 	menu_vbox.add_child(status_lbl)
 	
-	# Bottom Left: Watermark
+	# --- EXPANDING SPACER PUSHING WATERMARK TO BOTTOM ---
+	var spacer_bottom = Control.new()
+	spacer_bottom.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	main_vbox.add_child(spacer_bottom)
+	
+	# --- BOTTOM WATERMARK ---
 	var bottom_lbl = Label.new()
 	bottom_lbl.text = "v0.1 · RTS multiplayer"
-	bottom_lbl.size_flags_vertical = Control.SIZE_SHRINK_END
 	bottom_lbl.add_theme_font_size_override("font_size", 11)
 	bottom_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED.darkened(0.2))
-	margin.add_child(bottom_lbl)
+	main_vbox.add_child(bottom_lbl)
 
 func _crossfade_banner() -> void:
 	if banner_textures.size() < 2: return
@@ -187,10 +208,10 @@ func _crossfade_banner() -> void:
 	var tween = create_tween()
 	if active_banner_idx == 0:
 		active_banner_idx = 1
-		tween.tween_property(banner_rect2, "modulate:a", 1.0, 1.5)
+		tween.tween_property(banner_rect2, "modulate:a", 1.0, 1.2)
 	else:
 		active_banner_idx = 0
-		tween.tween_property(banner_rect2, "modulate:a", 0.0, 1.5)
+		tween.tween_property(banner_rect2, "modulate:a", 0.0, 1.2)
 
 func _update_profile_display() -> void:
 	if settings_manager != null and profile_name_lbl != null:
