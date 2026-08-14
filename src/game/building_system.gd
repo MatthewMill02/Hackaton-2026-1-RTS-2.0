@@ -37,7 +37,7 @@ class BuildingInstance:
 	var sprite_texture: Texture2D = null
 
 var definitions: Dictionary = {}
-var building_instances: Array[BuildingInstance] = []
+var building_instances: Array = []
 var next_instance_id: int = 1
 var textures_cache: Dictionary = {}
 

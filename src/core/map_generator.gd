@@ -20,12 +20,11 @@ static func generate_map(seed_val: int = 0) -> MapData:
 	var b3_pos = Vector2i(5, map.height - 6)
 	var b4_pos = Vector2i(map.width - 6, map.height - 6)
 	
-	map.bases = [
-		MapData.BaseSpawn.new(0, b1_pos),
-		MapData.BaseSpawn.new(1, b2_pos),
-		MapData.BaseSpawn.new(2, b3_pos),
-		MapData.BaseSpawn.new(3, b4_pos)
-	]
+	map.bases.clear()
+	map.bases.append(MapData.BaseSpawn.new(0, b1_pos))
+	map.bases.append(MapData.BaseSpawn.new(1, b2_pos))
+	map.bases.append(MapData.BaseSpawn.new(2, b3_pos))
+	map.bases.append(MapData.BaseSpawn.new(3, b4_pos))
 	
 	var occupied: Dictionary = {}
 	

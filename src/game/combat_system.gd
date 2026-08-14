@@ -11,7 +11,7 @@ class ActiveBeam:
 	var duration: float = 0.15
 	var color: Color
 
-var active_beams: Array[ActiveBeam] = []
+var active_beams: Array = []
 var turret_cooldowns: Dictionary = {} # building_instance_id -> float
 
 func update_combat(

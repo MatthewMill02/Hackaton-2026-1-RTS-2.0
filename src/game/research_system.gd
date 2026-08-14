@@ -14,9 +14,9 @@ class CardDef:
 	var effect_type: String
 	var effect_val: float
 
-var all_cards: Array[CardDef] = []
-var deck_pool: Array[CardDef] = []
-var unlocked_cards: Array[CardDef] = []
+var all_cards: Array = []
+var deck_pool: Array = []
+var unlocked_cards: Array = []
 
 # Modifiers
 var mining_multiplier: float = 1.0

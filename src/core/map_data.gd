@@ -66,10 +66,9 @@ class BaseSpawn:
 
 var seed_value: int = 0
 var width: int = MAP_SIZE
-var height: int = MAP_SIZE
-var bases: Array[BaseSpawn] = []
-var resources: Array[ResourceNode] = []
-var camps: Array[CampNode] = []
+var bases: Array = []
+var resources: Array = []
+var camps: Array = []
 
 func is_in_bounds(gx: int, gy: int) -> bool:
 	return gx >= 0 and gy >= 0 and gx < width and gy < height

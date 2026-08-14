@@ -44,7 +44,7 @@ class UnitInstance:
 	var sprite_texture: Texture2D = null
 
 var definitions: Dictionary = {}
-var units: Array[UnitInstance] = []
+var units: Array = []
 var next_unit_id: int = 1
 var textures_cache: Dictionary = {}
 
