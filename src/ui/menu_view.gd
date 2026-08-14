@@ -1,4 +1,4 @@
-# Overwatch / Factory of War Main Menu View with Background Slides & Clean Layout
+# Overwatch / Factory of War Main Menu View with Background Slides & Clean Dynamic Profile Layout
 class_name MenuView
 extends Control
 
@@ -47,7 +47,6 @@ func _load_banner_textures() -> void:
 		banner_textures.append(tex1)
 	if tex2 != null:
 		banner_textures.append(tex2)
-	print("[MenuView] Loaded background banner textures: ", banner_textures.size())
 
 func _build_ui() -> void:
 	# Fallback dark background
@@ -84,13 +83,13 @@ func _build_ui() -> void:
 	vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(vignette)
 	
-	# 2. Main Layout Container (Single MarginContainer -> Single VBoxContainer)
+	# 2. Main Layout Container
 	var margin = MarginContainer.new()
 	margin.set_anchors_preset(PRESET_FULL_RECT)
-	margin.add_theme_constant_override("margin_left", 70)
-	margin.add_theme_constant_override("margin_right", 70)
-	margin.add_theme_constant_override("margin_top", 45)
-	margin.add_theme_constant_override("margin_bottom", 35)
+	margin.add_theme_constant_override("margin_left", 80)
+	margin.add_theme_constant_override("margin_right", 80)
+	margin.add_theme_constant_override("margin_top", 50)
+	margin.add_theme_constant_override("margin_bottom", 40)
 	add_child(margin)
 	
 	var main_vbox = VBoxContainer.new()
@@ -98,7 +97,7 @@ func _build_ui() -> void:
 	main_vbox.add_theme_constant_override("separation", 0)
 	margin.add_child(main_vbox)
 	
-	# --- TOP ROW (Title on Left, Profile on Right) ---
+	# --- TOP ROW (Title on Left, Dynamic Profile on Right) ---
 	var top_hbox = HBoxContainer.new()
 	top_hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	main_vbox.add_child(top_hbox)
@@ -106,30 +105,31 @@ func _build_ui() -> void:
 	# Top Left: Title
 	var title_vbox = VBoxContainer.new()
 	title_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title_vbox.add_theme_constant_override("separation", 2)
+	title_vbox.add_theme_constant_override("separation", 4)
 	top_hbox.add_child(title_vbox)
 	
 	var title_lbl = Label.new()
 	title_lbl.text = "FACTORY OF WAR"
-	title_lbl.add_theme_font_size_override("font_size", 44)
+	title_lbl.add_theme_font_size_override("font_size", 46)
 	title_lbl.add_theme_color_override("font_color", Color.WHITE)
 	title_vbox.add_child(title_lbl)
 	
 	var subtitle_lbl = Label.new()
 	subtitle_lbl.text = "Hackaton 2026 #1 · do 4 graczy"
-	subtitle_lbl.add_theme_font_size_override("font_size", 13)
+	subtitle_lbl.add_theme_font_size_override("font_size", 16)
 	subtitle_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
 	title_vbox.add_child(subtitle_lbl)
 	
-	# Top Right: Profile Badge
+	# Top Right: Dynamic Profile Badge (Properly fitting container & text)
 	var profile_btn = Button.new()
+	profile_btn.custom_minimum_size = Vector2(240, 58)
 	var profile_sb = StyleBoxFlat.new()
-	profile_sb.bg_color = Color(0.05, 0.08, 0.15, 0.92)
+	profile_sb.bg_color = Color(0.06, 0.10, 0.18, 0.95)
 	profile_sb.border_color = UITheme.COLOR_ACCENT_ORANGE
-	profile_sb.border_width_right = 5
-	profile_sb.set_corner_radius_all(2)
-	profile_sb.content_margin_left = 18
-	profile_sb.content_margin_right = 18
+	profile_sb.border_width_right = 6
+	profile_sb.set_corner_radius_all(3)
+	profile_sb.content_margin_left = 22
+	profile_sb.content_margin_right = 22
 	profile_sb.content_margin_top = 8
 	profile_sb.content_margin_bottom = 8
 	profile_btn.add_theme_stylebox_override("normal", profile_sb)
@@ -140,50 +140,52 @@ func _build_ui() -> void:
 	top_hbox.add_child(profile_btn)
 	
 	var prof_vbox = VBoxContainer.new()
+	prof_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
 	prof_vbox.add_theme_constant_override("separation", 2)
 	profile_btn.add_child(prof_vbox)
 	
 	profile_name_lbl = Label.new()
 	profile_name_lbl.text = "MATTHEWMILL"
-	profile_name_lbl.add_theme_font_size_override("font_size", 15)
+	profile_name_lbl.add_theme_font_size_override("font_size", 18)
 	profile_name_lbl.add_theme_color_override("font_color", Color.WHITE)
+	profile_name_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	prof_vbox.add_child(profile_name_lbl)
 	
 	var prof_hint = Label.new()
 	prof_hint.text = "KLIKNIJ ABY ZMIENIĆ"
-	prof_hint.add_theme_font_size_override("font_size", 10)
+	prof_hint.add_theme_font_size_override("font_size", 14)
 	prof_hint.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_ORANGE)
 	prof_vbox.add_child(prof_hint)
 	
 	# --- SPACER BETWEEN TITLE AND MENU BUTTONS ---
 	var spacer_top = Control.new()
-	spacer_top.custom_minimum_size = Vector2(0, 70)
+	spacer_top.custom_minimum_size = Vector2(0, 80)
 	main_vbox.add_child(spacer_top)
 	
 	# --- ACTION MENU BUTTONS ---
 	var menu_vbox = VBoxContainer.new()
 	menu_vbox.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	menu_vbox.add_theme_constant_override("separation", 20)
+	menu_vbox.add_theme_constant_override("separation", 22)
 	main_vbox.add_child(menu_vbox)
 	
 	# 1. STWÓRZ GRĘ
 	var btn_host = Button.new()
 	btn_host.text = "STWÓRZ GRĘ"
-	UITheme.style_menu_action_button(btn_host, 32)
+	UITheme.style_menu_action_button(btn_host, 34)
 	btn_host.pressed.connect(_on_create_game_pressed)
 	menu_vbox.add_child(btn_host)
 	
 	# 2. DOŁĄCZ DO GRY
 	var btn_join = Button.new()
 	btn_join.text = "DOŁĄCZ DO GRY"
-	UITheme.style_menu_action_button(btn_join, 32)
+	UITheme.style_menu_action_button(btn_join, 34)
 	btn_join.pressed.connect(_on_join_game_pressed)
 	menu_vbox.add_child(btn_join)
 	
 	# 3. USTAWIENIA
 	var btn_settings = Button.new()
 	btn_settings.text = "USTAWIENIA"
-	UITheme.style_menu_action_button(btn_settings, 24)
+	UITheme.style_menu_action_button(btn_settings, 28)
 	btn_settings.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
 	btn_settings.pressed.connect(_on_settings_pressed)
 	menu_vbox.add_child(btn_settings)
@@ -191,7 +193,7 @@ func _build_ui() -> void:
 	# Status message
 	status_lbl = Label.new()
 	status_lbl.text = ""
-	status_lbl.add_theme_font_size_override("font_size", 14)
+	status_lbl.add_theme_font_size_override("font_size", 16)
 	status_lbl.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
 	menu_vbox.add_child(status_lbl)
 	
@@ -203,7 +205,7 @@ func _build_ui() -> void:
 	# --- BOTTOM WATERMARK ---
 	var bottom_lbl = Label.new()
 	bottom_lbl.text = "v0.1 · RTS multiplayer"
-	bottom_lbl.add_theme_font_size_override("font_size", 11)
+	bottom_lbl.add_theme_font_size_override("font_size", 14)
 	bottom_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED.darkened(0.2))
 	main_vbox.add_child(bottom_lbl)
 
@@ -243,7 +245,7 @@ func _on_join_game_pressed() -> void:
 	add_child(join_modal)
 
 func _on_settings_pressed() -> void:
-	var modal = SettingsModal.new(settings_manager, network_manager)
+	var modal = SettingsModal.new(settings_manager, network_manager, false)
 	modal.settings_closed.connect(func(_saved):
 		_update_profile_display()
 	)

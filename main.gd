@@ -6,6 +6,7 @@ var network_manager: NetworkManager
 var ui_layer: CanvasLayer = null
 var current_view: Control = null
 var current_phase: GameState.GamePhase = GameState.GamePhase.MENU
+var active_map: MapData = null
 
 func _ready() -> void:
 	randomize()
@@ -35,6 +36,12 @@ func _ready() -> void:
 	# 4. Display Initial Overwatch-style Main Menu
 	show_menu_view()
 
+func _unhandled_input(event: InputEvent) -> void:
+	# Global F11 key for Fullscreen toggle
+	if event is InputEventKey and event.pressed and event.keycode == KEY_F11:
+		settings_manager.toggle_fullscreen()
+		get_viewport().set_input_as_handled()
+
 # ==============================================================================
 # View Switching & Scene Management
 # ==============================================================================
@@ -57,7 +64,11 @@ func show_lobby_view(is_host: bool) -> void:
 	current_phase = GameState.GamePhase.LOBBY
 	_clear_current_view()
 	
-	var lobby = LobbyView.new(network_manager, settings_manager)
+	# Generate new procedural 50x50 map for this lobby
+	if is_host or active_map == null:
+		active_map = MapGenerator.generate_map()
+	
+	var lobby = LobbyView.new(network_manager, settings_manager, active_map)
 	lobby.leave_lobby_requested.connect(_on_leave_lobby_requested)
 	lobby.ready_toggled.connect(_on_ready_toggled)
 	lobby.slot_selected.connect(_on_slot_selected)
@@ -77,7 +88,10 @@ func show_game_view() -> void:
 	current_phase = GameState.GamePhase.PLAYING
 	_clear_current_view()
 	
-	var hud = InGameHUD.new(network_manager, settings_manager)
+	if active_map == null:
+		active_map = MapGenerator.generate_map()
+		
+	var hud = InGameHUD.new(network_manager, settings_manager, active_map)
 	hud.exit_to_menu_requested.connect(func():
 		network_manager.disconnect_session()
 		show_menu_view("Rozłączono z gry.", false)
