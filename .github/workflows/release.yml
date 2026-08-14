@@ -1,0 +1,55 @@
+name: "Godot Build & Release"
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Release Windows
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: ⚙️ Setup Godot 4 & Export Templates
+        run: |
+          GODOT_VERSION="4.3"
+          GODOT_RELEASE="4.3-stable"
+          
+          echo "Pobieranie Godot Engine ${GODOT_RELEASE}..."
+          wget -q https://github.com/godotengine/godot/releases/download/${GODOT_RELEASE}/Godot_v${GODOT_RELEASE}_linux.x86_64.zip
+          unzip -q Godot_v${GODOT_RELEASE}_linux.x86_64.zip
+          sudo mv Godot_v${GODOT_RELEASE}_linux.x86_64 /usr/local/bin/godot
+          sudo chmod +x /usr/local/bin/godot
+          
+          echo "Konfiguracja szablonów eksportu (Export Templates)..."
+          mkdir -p ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          wget -q https://github.com/godotengine/godot/releases/download/${GODOT_RELEASE}/Godot_v${GODOT_RELEASE}_export_templates.tpz
+          unzip -q Godot_v${GODOT_RELEASE}_export_templates.tpz
+          mv templates/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable/
+          rm -f Godot_v${GODOT_RELEASE}_export_templates.tpz
+
+      - name: 🏗️ Export Windows Build
+        run: |
+          mkdir -p build/windows
+          godot --headless --export-release "Windows Desktop" build/windows/Automata-Tech-War.exe
+          cd build/windows
+          zip -r ../../Automata-Tech-War-Windows-x86_64.zip .
+          cd ../..
+
+      - name: 🚀 Create GitHub Release & Upload Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Automata-Tech-War-Windows-x86_64.zip
+          name: "Automata Tech-War ${{ github.ref_name }}"
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

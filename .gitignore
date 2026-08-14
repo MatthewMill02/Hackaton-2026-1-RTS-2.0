@@ -1,0 +1,7 @@
+# .gitignore dla Godota
+.godot/
+*.translation
+builds/
+*.exe
+*.pck
+*.zip
