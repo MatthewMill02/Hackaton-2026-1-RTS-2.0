@@ -1,4 +1,4 @@
-# In-Game Tactical HUD, 50x50 Map View, HQ & Drone Spawn, and ESC Modal
+# In-Game Tactical HUD, 50x50 Map View, HQ & Drone Spawn, ESC Modal & TAB Ranking
 class_name InGameHUD
 extends Control
 
@@ -71,6 +71,7 @@ var units: Array[UnitEntity] = []
 var in_game_chat_log: RichTextLabel
 var in_game_chat_input: LineEdit
 var active_settings_modal: SettingsModal = null
+var scoreboard_overlay: ScoreboardModal = null
 
 func _init(p_net: NetworkManager = null, p_settings: SettingsManager = null, p_map: MapData = null) -> void:
 	network_manager = p_net
@@ -88,13 +89,20 @@ func _ready() -> void:
 	_center_camera_on_player_base()
 
 func _input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed:
-		if event.keycode == KEY_ESCAPE:
-			_toggle_esc_settings_modal()
+	if event is InputEventKey:
+		if event.keycode == KEY_TAB:
+			if event.pressed and not event.echo:
+				_show_scoreboard()
+			elif not event.pressed:
+				_hide_scoreboard()
 			get_viewport().set_input_as_handled()
-		elif event.keycode == KEY_T and not in_game_chat_input.has_focus():
-			in_game_chat_input.grab_focus()
-			get_viewport().set_input_as_handled()
+		elif event.pressed:
+			if event.keycode == KEY_ESCAPE:
+				_toggle_esc_settings_modal()
+				get_viewport().set_input_as_handled()
+			elif event.keycode == KEY_T and not in_game_chat_input.has_focus():
+				in_game_chat_input.grab_focus()
+				get_viewport().set_input_as_handled()
 
 func _process(delta: float) -> void:
 	if not is_paused:
@@ -235,10 +243,15 @@ func _build_ui() -> void:
 	power_lbl.add_theme_color_override("font_color", UITheme.COLOR_SUCCESS_GREEN)
 	res_row2.add_child(power_lbl)
 	
+	var my_slot = 0
+	if network_manager != null and network_manager.local_player_data != null:
+		my_slot = network_manager.local_player_data.slot
+	var slot_color = GameState.SLOT_COLORS[my_slot] if my_slot < GameState.SLOT_COLORS.size() else UITheme.COLOR_ACCENT_CYAN
+	
 	player_name_lbl = Label.new()
-	player_name_lbl.text = settings_manager.player_name if settings_manager else "Gracz 1"
-	player_name_lbl.add_theme_font_size_override("font_size", 14)
-	player_name_lbl.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
+	player_name_lbl.text = settings_manager.player_name if settings_manager else "Pracownik"
+	player_name_lbl.add_theme_font_size_override("font_size", 15)
+	player_name_lbl.add_theme_color_override("font_color", slot_color)
 	res_row2.add_child(player_name_lbl)
 	
 	var spacer_t = Control.new()
@@ -332,7 +345,7 @@ func _build_in_game_chat_overlay() -> void:
 	chat_box.add_child(cvbox)
 	
 	var hint = Label.new()
-	hint.text = "Gra rozpoczęta! T — czat · LPM zamyka"
+	hint.text = "Gra rozpoczęta! T — czat · TAB — statystyki"
 	hint.add_theme_font_size_override("font_size", 14)
 	hint.add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD)
 	cvbox.add_child(hint)
@@ -354,7 +367,7 @@ func _build_in_game_chat_overlay() -> void:
 	var hint_lbl = Label.new()
 	hint_lbl.set_anchors_preset(PRESET_BOTTOM_WIDE)
 	hint_lbl.position = Vector2(0, -32)
-	hint_lbl.text = "LPM: zaznacz  PPM: rozkaz  T: czat  ESC/MENU: ustawienia  TAB: statystyki"
+	hint_lbl.text = "LPM: zaznacz  PPM: rozkaz  T: czat  ESC/MENU: ustawienia  TAB: ranking/statystyki"
 	hint_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint_lbl.add_theme_font_size_override("font_size", 15)
 	hint_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
@@ -376,7 +389,6 @@ func _build_minimap_box() -> void:
 	minimap.add_child(mini_inner)
 
 func _on_minimap_draw() -> void:
-	# Mini overview of 50x50 map
 	if active_map == null: return
 
 # ==============================================================================
@@ -448,7 +460,6 @@ func _on_map_draw() -> void:
 		else:
 			map_viewport.draw_rect(b_box, Color(0.2, 0.5, 0.9, 0.7), true)
 			
-		# Slot indicator ring
 		var slot_col = GameState.SLOT_COLORS[b.slot] if b.slot < GameState.SLOT_COLORS.size() else Color.WHITE
 		map_viewport.draw_arc(b_box.get_center(), tile_sz * 2.2, 0, TAU, 32, slot_col, 2.0)
 
@@ -472,17 +483,15 @@ func _on_map_gui_input(event: InputEvent) -> void:
 			is_dragging = event.pressed
 			drag_start = event.position
 		elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
-			# Command selected drone to move to clicked tile
 			var click_world = (event.position - map_camera_pos) / map_zoom
 			for u in units:
 				if u.selected:
 					u.target_pos = click_world
 					map_viewport.queue_redraw()
 		elif event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-			# Select drone
 			var click_world = (event.position - map_camera_pos) / map_zoom
 			for u in units:
-				if u.world_pos.distance_to(click_world) < 25.0:
+				if u.world_pos.distance_to(click_world) < 30.0:
 					u.selected = true
 				else:
 					u.selected = false
@@ -509,7 +518,11 @@ func _on_build_btn_pressed(building_name: String) -> void:
 func _on_chat_submitted(text: String) -> void:
 	var clean = text.strip_edges()
 	if not clean.is_empty():
-		in_game_chat_log.append_text("[color=#2ec4b6][b]%s:[/b][/color] %s\n" % [settings_manager.player_name if settings_manager else "Gracz", clean])
+		var my_slot = 0
+		if network_manager != null and network_manager.local_player_data != null:
+			my_slot = network_manager.local_player_data.slot
+		var col_hex = GameState.SLOT_COLORS[my_slot].to_html(false)
+		in_game_chat_log.append_text("[color=#%s][b]%s:[/b][/color] %s\n" % [col_hex, settings_manager.player_name if settings_manager else "Pracownik", clean])
 		chat_sent.emit(clean)
 		in_game_chat_input.clear()
 
@@ -530,3 +543,13 @@ func _toggle_esc_settings_modal() -> void:
 		active_settings_modal = null
 	)
 	add_child(active_settings_modal)
+
+func _show_scoreboard() -> void:
+	if scoreboard_overlay == null or not is_instance_valid(scoreboard_overlay):
+		scoreboard_overlay = ScoreboardModal.new(network_manager, settings_manager, target_score, match_timer_seconds)
+		add_child(scoreboard_overlay)
+
+func _hide_scoreboard() -> void:
+	if scoreboard_overlay != null and is_instance_valid(scoreboard_overlay):
+		scoreboard_overlay.queue_free()
+		scoreboard_overlay = null

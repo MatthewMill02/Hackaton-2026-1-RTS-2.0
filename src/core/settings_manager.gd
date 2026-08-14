@@ -4,7 +4,7 @@ extends RefCounted
 
 const SAVE_PATH: String = "user://settings.cfg"
 
-var player_name: String = "MatthewMill"
+var player_name: String = ""
 var map_scroll_speed: float = 1.0
 var window_mode: int = 0 # 0: Fullscreen (F11), 1: Maximized, 2: Windowed 1920x1080, 3: Windowed 1280x720
 var custom_host_ip: String = ""
@@ -18,11 +18,18 @@ var match_duration_min: int = 45
 func _init() -> void:
 	load_settings()
 
+func _generate_default_nick() -> String:
+	return "Pracownik-umowa-zlecenie#%d" % randi_range(1, 1000)
+
 func load_settings() -> void:
 	var config = ConfigFile.new()
 	var err = config.load(SAVE_PATH)
 	if err == OK:
-		player_name = config.get_value("player", "name", "MatthewMill")
+		var saved_name = config.get_value("player", "name", "")
+		if saved_name.is_empty() or saved_name == "MatthewMill":
+			player_name = _generate_default_nick()
+		else:
+			player_name = saved_name
 		map_scroll_speed = float(config.get_value("gameplay", "scroll_speed", 1.0))
 		window_mode = int(config.get_value("display", "window_mode", 0))
 		custom_host_ip = str(config.get_value("network", "custom_ip", ""))
@@ -30,6 +37,8 @@ func load_settings() -> void:
 		creative_mode = bool(config.get_value("match", "creative", false))
 		victory_points = int(config.get_value("match", "points", 1200))
 		match_duration_min = int(config.get_value("match", "duration", 45))
+	else:
+		player_name = _generate_default_nick()
 
 func save_settings() -> void:
 	var config = ConfigFile.new()

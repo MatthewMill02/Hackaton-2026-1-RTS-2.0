@@ -296,6 +296,9 @@ func request_slot_change(sender_id: int, target_slot: int) -> void:
 		p.slot = target_slot
 		p.color = GameState.SLOT_COLORS[target_slot]
 		_broadcast_player_list()
+		var slot_names = ["Niebieską (Baza 1)", "Czerwoną (Baza 2)", "Zieloną (Baza 3)", "Żółtą (Baza 4)"]
+		var s_name = slot_names[target_slot] if target_slot < slot_names.size() else "Bazę %d" % (target_slot + 1)
+		rpc("receive_chat", "GRACZ", "%s wybrał %s!" % [p.name, s_name], true)
 
 @rpc("any_peer", "call_local", "reliable")
 func set_player_ready(p_id: int, ready_val: bool) -> void:
@@ -307,6 +310,7 @@ func set_player_ready(p_id: int, ready_val: bool) -> void:
 		
 		if multiplayer.is_server():
 			_broadcast_player_list()
+			rpc("receive_chat", "GRACZ", "%s jest %s!" % [players[p_id].name, "GOTOWY" if ready_val else "NIEGOTOWY"], true)
 
 @rpc("authority", "reliable")
 func sync_player_list(players_array: Array) -> void:
@@ -331,6 +335,7 @@ func receive_chat(sender: String, msg: String, is_sys: bool) -> void:
 
 @rpc("authority", "call_local", "reliable")
 func trigger_match_start() -> void:
+	chat_message_received.emit("START", "Gra rozpoczęta! Przygotuj swoje jednostki i broń bazy!", true)
 	match_started.emit()
 
 # ==============================================================================

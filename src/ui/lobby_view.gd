@@ -1,4 +1,4 @@
-# Overwatch / Factory of War Interactive 50x50 Map Lobby View
+# Overwatch / Factory of War Interactive 50x50 Map Lobby View with Colored Bases & Categories
 class_name LobbyView
 extends Control
 
@@ -52,6 +52,10 @@ func _init(p_net: NetworkManager = null, p_settings: SettingsManager = null, p_m
 func _ready() -> void:
 	_build_ui()
 	_update_room_code_display()
+	
+	# Initial welcome in chat
+	if network_manager and network_manager.is_host:
+		add_chat_entry("SYSTEM", "Utworzono pokój [KOD: %s]. Oczekiwanie na graczy..." % network_manager.room_code, true)
 
 func set_map_data(new_map: MapData) -> void:
 	active_map = new_map
@@ -197,7 +201,10 @@ func _build_ui() -> void:
 	creative_check = CheckBox.new()
 	creative_check.text = "TRYB KREATYWNY"
 	creative_check.add_theme_font_size_override("font_size", 15)
-	creative_check.toggled.connect(func(v): is_creative = v)
+	creative_check.toggled.connect(func(v):
+		is_creative = v
+		match_settings_changed.emit(is_creative, current_points, current_duration)
+	)
 	side_vbox.add_child(creative_check)
 	
 	# Points Stepper
@@ -298,25 +305,27 @@ func _build_map_interactive_elements(container: Control) -> void:
 	base_player_lbls.clear()
 	
 	var base_configs = [
-		{"name": "B1", "anchor_x": 0.12, "anchor_y": 0.14, "color": GameState.SLOT_COLORS[0]},
-		{"name": "B2", "anchor_x": 0.88, "anchor_y": 0.14, "color": GameState.SLOT_COLORS[1]},
-		{"name": "B3", "anchor_x": 0.12, "anchor_y": 0.86, "color": GameState.SLOT_COLORS[2]},
-		{"name": "B4", "anchor_x": 0.88, "anchor_y": 0.86, "color": GameState.SLOT_COLORS[3]}
+		{"name": "B1", "anchor_x": 0.12, "anchor_y": 0.14, "color": GameState.SLOT_COLORS[0], "desc": "Niebieska"},
+		{"name": "B2", "anchor_x": 0.88, "anchor_y": 0.14, "color": GameState.SLOT_COLORS[1], "desc": "Czerwona"},
+		{"name": "B3", "anchor_x": 0.12, "anchor_y": 0.86, "color": GameState.SLOT_COLORS[2], "desc": "Zielona"},
+		{"name": "B4", "anchor_x": 0.88, "anchor_y": 0.86, "color": GameState.SLOT_COLORS[3], "desc": "Żółta"}
 	]
 	
 	for i in range(base_configs.size()):
 		var cfg = base_configs[i]
 		var base_btn = Button.new()
-		base_btn.custom_minimum_size = Vector2(90, 72)
+		base_btn.custom_minimum_size = Vector2(96, 76)
 		base_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		
-		var sb_base = UITheme.create_panel_style(Color(0.06, 0.10, 0.16, 0.90), cfg.color, 4, 2, 6)
+		var sb_base = UITheme.create_panel_style(Color(0.06, 0.10, 0.16, 0.92), cfg.color, 4, 3, 6)
 		base_btn.add_theme_stylebox_override("normal", sb_base)
 		base_btn.add_theme_stylebox_override("hover", sb_base)
 		base_btn.add_theme_stylebox_override("pressed", sb_base)
 		
 		var idx = i
-		base_btn.pressed.connect(func(): slot_selected.emit(idx))
+		base_btn.pressed.connect(func():
+			slot_selected.emit(idx)
+		)
 		
 		var bvbox = VBoxContainer.new()
 		bvbox.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -324,16 +333,16 @@ func _build_map_interactive_elements(container: Control) -> void:
 		base_btn.add_child(bvbox)
 		
 		var b_title = Label.new()
-		b_title.text = cfg.name
+		b_title.text = cfg.name + " (" + cfg.desc + ")"
 		b_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		b_title.add_theme_font_size_override("font_size", 22)
-		b_title.add_theme_color_override("font_color", Color.WHITE)
+		b_title.add_theme_font_size_override("font_size", 16)
+		b_title.add_theme_color_override("font_color", cfg.color)
 		bvbox.add_child(b_title)
 		
 		var b_user = Label.new()
-		b_user.text = "[WOLNA]"
+		b_user.text = "[KLIKNIJ ABY WYBRAĆ]"
 		b_user.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		b_user.add_theme_font_size_override("font_size", 14)
+		b_user.add_theme_font_size_override("font_size", 12)
 		b_user.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
 		bvbox.add_child(b_user)
 		base_player_lbls.append(b_user)
@@ -354,12 +363,12 @@ func _position_base_button(btn: Button, ax: float, ay: float) -> void:
 
 func _build_map_chat_overlay(container: Control) -> void:
 	var chat_box = PanelContainer.new()
-	chat_box.custom_minimum_size = Vector2(380, 180)
+	chat_box.custom_minimum_size = Vector2(400, 190)
 	chat_box.set_anchors_preset(PRESET_BOTTOM_LEFT)
-	chat_box.position = Vector2(24, -204)
+	chat_box.position = Vector2(24, -214)
 	chat_box.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	
-	var sb = UITheme.create_panel_style(Color(0.03, 0.06, 0.10, 0.88), Color(0.14, 0.26, 0.40, 0.6), 4, 1, 10)
+	var sb = UITheme.create_panel_style(Color(0.03, 0.06, 0.10, 0.90), Color(0.14, 0.26, 0.40, 0.6), 4, 1, 10)
 	chat_box.add_theme_stylebox_override("panel", sb)
 	container.add_child(chat_box)
 	
@@ -412,7 +421,7 @@ func _on_map_canvas_draw() -> void:
 	map_canvas.draw_rect(full_map_rect, Color(0.04, 0.06, 0.09, 1.0), true)
 	map_canvas.draw_rect(full_map_rect, Color(0.18, 0.25, 0.35, 0.8), false, 2.0)
 	
-	# Playable area (inside 1-tile border)
+	# Playable area
 	var play_rect = Rect2(origin_x + cell_size, origin_y + cell_size, cell_size * (map_w - 2), cell_size * (map_h - 2))
 	map_canvas.draw_rect(play_rect, Color(0.06, 0.09, 0.14, 1.0), true)
 	
@@ -456,7 +465,7 @@ func _on_map_canvas_draw() -> void:
 		var ry = origin_y + r.grid_pos.y * cell_size
 		var r_rect = Rect2(rx + 1, ry + 1, cell_size - 2, cell_size - 2)
 		
-		var r_col = Color(0.75, 0.75, 0.75) # Stone
+		var r_col = Color(0.75, 0.75, 0.75)
 		match r.type:
 			MapData.ResourceType.STONE: r_col = Color(0.75, 0.75, 0.75)
 			MapData.ResourceType.IRON: r_col = Color(0.30, 0.85, 1.0)
@@ -475,7 +484,7 @@ func update_lobby_state(players: Array, is_host: bool, local_peer_id: int) -> vo
 	_update_room_code_display()
 	
 	for i in range(GameState.MAX_PLAYERS):
-		base_player_lbls[i].text = "[WOLNA]"
+		base_player_lbls[i].text = "[KLIKNIJ ABY WYBRAĆ]"
 		base_player_lbls[i].add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
 		
 	for c in player_list_vbox.get_children():
@@ -483,19 +492,23 @@ func update_lobby_state(players: Array, is_host: bool, local_peer_id: int) -> vo
 		
 	var count = players.size()
 	for p in players:
+		var slot_col = GameState.SLOT_COLORS[p.slot] if p.slot < GameState.SLOT_COLORS.size() else UITheme.COLOR_ACCENT_CYAN
+		
+		# Update base button label
 		if p.slot >= 0 and p.slot < GameState.MAX_PLAYERS:
 			var slot_name = p.name
 			if p.is_host: slot_name += " 👑"
 			base_player_lbls[p.slot].text = slot_name
-			base_player_lbls[p.slot].add_theme_color_override("font_color", Color.WHITE)
+			base_player_lbls[p.slot].add_theme_color_override("font_color", slot_col)
 			
+		# Add to right sidebar
 		var p_card = Label.new()
 		var desc = p.name
 		if p.is_host: desc += " · HOST"
 		desc += " · BAZA %d" % (p.slot + 1)
 		p_card.text = desc
-		p_card.add_theme_font_size_override("font_size", 15)
-		p_card.add_theme_color_override("font_color", Color.WHITE if not p.is_host else UITheme.COLOR_WARNING_GOLD)
+		p_card.add_theme_font_size_override("font_size", 16)
+		p_card.add_theme_color_override("font_color", slot_col)
 		player_list_vbox.add_child(p_card)
 
 	if is_host:
@@ -509,9 +522,24 @@ func update_lobby_state(players: Array, is_host: bool, local_peer_id: int) -> vo
 
 func add_chat_entry(sender: String, message: String, is_system: bool = false) -> void:
 	if is_system:
-		chat_log.append_text("[color=#ffd166][b]📢 %s:[/b] %s[/color]\n" % [sender, message])
+		match sender.to_upper():
+			"USTAWIENIA":
+				chat_log.append_text("[color=#c084fc][b]⚙️ USTAWIENIA:[/b] %s[/color]\n" % message)
+			"GRACZ":
+				chat_log.append_text("[color=#22d3ee][b]🔄 GRACZ:[/b] %s[/color]\n" % message)
+			"START":
+				chat_log.append_text("[color=#fb923c][b]🚀 START:[/b] %s[/color]\n" % message)
+			_:
+				chat_log.append_text("[color=#ffd166][b]📢 %s:[/b] %s[/color]\n" % [sender, message])
 	else:
-		chat_log.append_text("[color=#00f0ff][b]%s:[/b][/color] %s\n" % [sender, message])
+		# Check if sender has slot color
+		var col_hex = "00f0ff"
+		if network_manager != null:
+			for p in network_manager.get_players_list():
+				if p.name == sender and p.slot < GameState.SLOT_COLORS.size():
+					col_hex = GameState.SLOT_COLORS[p.slot].to_html(false)
+					break
+		chat_log.append_text("[color=#%s][b]%s:[/b][/color] %s\n" % [col_hex, sender, message])
 
 func _update_room_code_display() -> void:
 	if network_manager != null and not network_manager.room_code.is_empty():
@@ -521,11 +549,15 @@ func _change_points(delta_pts: int) -> void:
 	current_points = clampi(current_points + delta_pts, 100, 5000)
 	points_val_lbl.text = str(current_points)
 	match_settings_changed.emit(is_creative, current_points, current_duration)
+	if network_manager and network_manager.is_host:
+		network_manager.send_chat("Zmieniono cel punktowy: %d pkt" % current_points)
 
 func _change_duration(delta_dur: int) -> void:
 	current_duration = clampi(current_duration + delta_dur, 5, 120)
 	duration_val_lbl.text = str(current_duration)
 	match_settings_changed.emit(is_creative, current_points, current_duration)
+	if network_manager and network_manager.is_host:
+		network_manager.send_chat("Zmieniono czas rozgrywki: %d min" % current_duration)
 
 func _on_add_bot_pressed() -> void:
 	add_chat_entry("SYSTEM", "Dodano wirtualnego Bota do wolnej bazy.", true)
