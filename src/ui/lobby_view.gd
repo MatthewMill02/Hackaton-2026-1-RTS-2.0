@@ -1,4 +1,4 @@
-# Pure Code Multiplayer Lobby View with Room Code Banner & Public Lobby Switch
+# Overwatch / Factory of War Interactive Mini-World Lobby View
 class_name LobbyView
 extends Control
 
@@ -7,426 +7,501 @@ signal ready_toggled()
 signal slot_selected(slot_index: int)
 signal chat_submitted(message: String)
 signal start_game_requested()
-signal public_toggled(is_public: bool)
+signal match_settings_changed(creative: bool, points: int, duration_min: int)
 
 var network_manager: NetworkManager
+var settings_manager: SettingsManager
 
-# UI References
-var header_title_lbl: Label
-var header_info_lbl: Label
-var code_display_lbl: Label
-var copy_code_btn: Button
-var public_checkbox: CheckBox
-var slot_cards: Array[PanelContainer] = []
-var slot_name_lbls: Array[Label] = []
-var slot_status_lbls: Array[Label] = []
-var slot_buttons: Array[Button] = []
+# UI References - Left: Map Preview
+var map_canvas: Control
+var base_buttons: Array[Button] = []
+var base_player_lbls: Array[Label] = []
+var base_indicators: Array[ColorRect] = []
+
+# Chat
 var chat_log: RichTextLabel
 var chat_input: LineEdit
-var ready_btn: Button
-var start_btn: Button
-var leave_btn: Button
 
-func _init(net_mgr: NetworkManager = null) -> void:
-	network_manager = net_mgr
+# Right: Sidebar
+var header_status_lbl: Label
+var code_lbl: Label
+var copy_btn: Button
+var player_list_vbox: VBoxContainer
+var creative_check: CheckBox
+var points_val_lbl: Label
+var duration_val_lbl: Label
+var public_check: CheckBox
+var add_bot_btn: Button
+var start_btn: Button
+var exit_btn: Button
+
+# Match Settings
+var current_points: int = 1200
+var current_duration: int = 45
+var is_creative: bool = false
+
+func _init(p_net: NetworkManager = null, p_settings: SettingsManager = null) -> void:
+	network_manager = p_net
+	settings_manager = p_settings
 	set_anchors_preset(PRESET_FULL_RECT)
 
 func _ready() -> void:
 	_build_ui()
-	_update_header_info()
-	if network_manager != null:
-		network_manager.lobby_public_status_changed.connect(_on_public_status_changed)
+	_update_room_code_display()
 
 func _build_ui() -> void:
-	# Dark Background
+	# Fullscreen dark background
 	var bg = ColorRect.new()
-	bg.color = UITheme.COLOR_BG_DARK
+	bg.color = Color(0.02, 0.04, 0.07, 1.0)
 	bg.set_anchors_preset(PRESET_FULL_RECT)
 	add_child(bg)
 	
-	# Margin Layout
-	var margin = MarginContainer.new()
-	margin.set_anchors_preset(PRESET_FULL_RECT)
-	margin.add_theme_constant_override("margin_left", 28)
-	margin.add_theme_constant_override("margin_right", 28)
-	margin.add_theme_constant_override("margin_top", 20)
-	margin.add_theme_constant_override("margin_bottom", 20)
-	add_child(margin)
-	
-	var main_vbox = VBoxContainer.new()
-	main_vbox.add_theme_constant_override("separation", 14)
-	margin.add_child(main_vbox)
+	# Main Split HBox (70% Map Preview, 30% Lobby Sidebar)
+	var main_hbox = HBoxContainer.new()
+	main_hbox.set_anchors_preset(PRESET_FULL_RECT)
+	main_hbox.add_theme_constant_override("separation", 0)
+	add_child(main_hbox)
 	
 	# ==========================================================================
-	# 1. HEADER & ROOM CODE BANNER
+	# 1. LEFT SIDE: INTERACTIVE MINI-WORLD MAP (70%)
 	# ==========================================================================
-	var header_panel = PanelContainer.new()
-	header_panel.add_theme_stylebox_override("panel", UITheme.create_panel_style(
-		UITheme.COLOR_PANEL_BG,
-		UITheme.COLOR_PANEL_BORDER,
-		8, 1, 14
+	var map_container = Control.new()
+	map_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	map_container.size_flags_stretch_ratio = 2.4
+	main_hbox.add_child(map_container)
+	
+	map_canvas = Control.new()
+	map_canvas.set_anchors_preset(PRESET_FULL_RECT)
+	map_canvas.draw.connect(_on_map_canvas_draw)
+	map_container.add_child(map_canvas)
+	
+	_build_map_interactive_elements(map_container)
+	_build_map_chat_overlay(map_container)
+	
+	# Orange vertical divider line
+	var divider = ColorRect.new()
+	divider.custom_minimum_size = Vector2(3, 0)
+	divider.color = UITheme.COLOR_ACCENT_ORANGE
+	main_hbox.add_child(divider)
+	
+	# ==========================================================================
+	# 2. RIGHT SIDE: LOBBY SETTINGS & PLAYERS (30%)
+	# ==========================================================================
+	var side_panel = PanelContainer.new()
+	side_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	side_panel.size_flags_stretch_ratio = 1.0
+	side_panel.add_theme_stylebox_override("panel", UITheme.create_panel_style(
+		Color(0.04, 0.06, 0.11, 0.98),
+		Color(0.12, 0.24, 0.38, 0.8),
+		0, 0, 20
 	))
-	main_vbox.add_child(header_panel)
+	main_hbox.add_child(side_panel)
 	
-	var header_hbox = HBoxContainer.new()
-	header_hbox.add_theme_constant_override("separation", 16)
-	header_panel.add_child(header_hbox)
+	var side_vbox = VBoxContainer.new()
+	side_vbox.add_theme_constant_override("separation", 14)
+	side_panel.add_child(side_vbox)
 	
-	# Left: Title & Info
-	var title_box = VBoxContainer.new()
-	title_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	header_hbox.add_child(title_box)
+	# Header & Exit
+	var header_row = HBoxContainer.new()
+	side_vbox.add_child(header_row)
 	
-	header_title_lbl = Label.new()
-	header_title_lbl.text = "LOBBY ROZGRYWKI"
-	header_title_lbl.add_theme_font_size_override("font_size", 22)
-	header_title_lbl.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
-	title_box.add_child(header_title_lbl)
+	var header_vbox = VBoxContainer.new()
+	header_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header_row.add_child(header_vbox)
 	
-	header_info_lbl = Label.new()
-	header_info_lbl.text = "Pobieranie informacji o sieci..."
-	header_info_lbl.add_theme_font_size_override("font_size", 12)
-	header_info_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
-	title_box.add_child(header_info_lbl)
+	var lobby_title = Label.new()
+	lobby_title.text = "LOBBY"
+	lobby_title.add_theme_font_size_override("font_size", 26)
+	lobby_title.add_theme_color_override("font_color", Color.WHITE)
+	header_vbox.add_child(lobby_title)
 	
-	# Middle/Right: Room Code Banner
-	var code_box = PanelContainer.new()
-	var code_sb = UITheme.create_panel_style(
-		Color(0.04, 0.08, 0.14, 0.95),
-		UITheme.COLOR_ACCENT_CYAN,
-		8, 2, 8
+	header_status_lbl = Label.new()
+	header_status_lbl.text = "Oczekiwanie na graczy — wybierz bazę"
+	header_status_lbl.add_theme_font_size_override("font_size", 11)
+	header_status_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+	header_vbox.add_child(header_status_lbl)
+	
+	exit_btn = Button.new()
+	exit_btn.text = "WYJDŹ"
+	exit_btn.add_theme_font_size_override("font_size", 13)
+	exit_btn.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_RED)
+	exit_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	var sb_empty = StyleBoxEmpty.new()
+	exit_btn.add_theme_stylebox_override("normal", sb_empty)
+	exit_btn.add_theme_stylebox_override("hover", sb_empty)
+	exit_btn.add_theme_stylebox_override("pressed", sb_empty)
+	exit_btn.pressed.connect(func(): leave_lobby_requested.emit())
+	header_row.add_child(exit_btn)
+	
+	# Room Code
+	var code_box = VBoxContainer.new()
+	code_box.add_theme_constant_override("separation", 2)
+	side_vbox.add_child(code_box)
+	
+	var code_header_lbl = Label.new()
+	code_header_lbl.text = "KOD POKOJU"
+	code_header_lbl.add_theme_font_size_override("font_size", 11)
+	code_header_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+	code_box.add_child(code_header_lbl)
+	
+	var code_btn = Button.new()
+	code_btn.custom_minimum_size = Vector2(0, 44)
+	code_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	var sb_code = UITheme.create_panel_style(Color(0.06, 0.10, 0.18, 0.8), UITheme.COLOR_ACCENT_CYAN, 4, 1, 8)
+	code_btn.add_theme_stylebox_override("normal", sb_code)
+	code_btn.add_theme_stylebox_override("hover", sb_code)
+	code_btn.add_theme_stylebox_override("pressed", sb_code)
+	code_btn.pressed.connect(_on_copy_code_pressed)
+	code_box.add_child(code_btn)
+	
+	code_lbl = Label.new()
+	code_lbl.text = "------"
+	code_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	code_lbl.add_theme_font_size_override("font_size", 24)
+	code_lbl.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
+	code_btn.add_child(code_lbl)
+	
+	var code_hint = Label.new()
+	code_hint.text = "Kliknij kod, aby skopiować"
+	code_hint.add_theme_font_size_override("font_size", 10)
+	code_hint.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+	code_box.add_child(code_hint)
+	
+	# Players Header & List
+	var players_title = Label.new()
+	players_title.text = "GRACZE"
+	players_title.add_theme_font_size_override("font_size", 12)
+	players_title.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
+	side_vbox.add_child(players_title)
+	
+	player_list_vbox = VBoxContainer.new()
+	player_list_vbox.add_theme_constant_override("separation", 4)
+	side_vbox.add_child(player_list_vbox)
+	
+	# Match Settings Section
+	var settings_header = Label.new()
+	settings_header.text = "USTAWIENIA MECZU"
+	settings_header.add_theme_font_size_override("font_size", 12)
+	settings_header.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
+	side_vbox.add_child(settings_header)
+	
+	creative_check = CheckBox.new()
+	creative_check.text = "TRYB KREATYWNY"
+	creative_check.add_theme_font_size_override("font_size", 13)
+	creative_check.toggled.connect(func(v): is_creative = v)
+	side_vbox.add_child(creative_check)
+	
+	# Points Stepper
+	var pts_row = HBoxContainer.new()
+	side_vbox.add_child(pts_row)
+	var pts_lbl = Label.new()
+	pts_lbl.text = "PUNKTY DO WYGRANEJ:"
+	pts_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pts_lbl.add_theme_font_size_override("font_size", 11)
+	pts_row.add_child(pts_lbl)
+	
+	var btn_pts_minus = Button.new()
+	btn_pts_minus.text = "-"
+	btn_pts_minus.custom_minimum_size = Vector2(28, 28)
+	btn_pts_minus.pressed.connect(func(): _change_points(-100))
+	pts_row.add_child(btn_pts_minus)
+	
+	points_val_lbl = Label.new()
+	points_val_lbl.text = "1200"
+	points_val_lbl.custom_minimum_size = Vector2(50, 0)
+	points_val_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	points_val_lbl.add_theme_font_size_override("font_size", 13)
+	pts_row.add_child(points_val_lbl)
+	
+	var btn_pts_plus = Button.new()
+	btn_pts_plus.text = "+"
+	btn_pts_plus.custom_minimum_size = Vector2(28, 28)
+	btn_pts_plus.pressed.connect(func(): _change_points(100))
+	pts_row.add_child(btn_pts_plus)
+	
+	# Duration Stepper
+	var dur_row = HBoxContainer.new()
+	side_vbox.add_child(dur_row)
+	var dur_lbl = Label.new()
+	dur_lbl.text = "CZAS GRY (MIN):"
+	dur_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	dur_lbl.add_theme_font_size_override("font_size", 11)
+	dur_row.add_child(dur_lbl)
+	
+	var btn_dur_minus = Button.new()
+	btn_dur_minus.text = "-5"
+	btn_dur_minus.custom_minimum_size = Vector2(28, 28)
+	btn_dur_minus.pressed.connect(func(): _change_duration(-5))
+	dur_row.add_child(btn_dur_minus)
+	
+	duration_val_lbl = Label.new()
+	duration_val_lbl.text = "45"
+	duration_val_lbl.custom_minimum_size = Vector2(50, 0)
+	duration_val_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	duration_val_lbl.add_theme_font_size_override("font_size", 13)
+	dur_row.add_child(duration_val_lbl)
+	
+	var btn_dur_plus = Button.new()
+	btn_dur_plus.text = "+5"
+	btn_dur_plus.custom_minimum_size = Vector2(28, 28)
+	btn_dur_plus.pressed.connect(func(): _change_duration(5))
+	dur_row.add_child(btn_dur_plus)
+	
+	# Public lobby check
+	public_check = CheckBox.new()
+	public_check.text = "LOBBY PUBLICZNE"
+	public_check.button_pressed = true
+	public_check.add_theme_font_size_override("font_size", 13)
+	public_check.toggled.connect(func(v):
+		if network_manager and network_manager.is_host:
+			network_manager.set_lobby_public(v)
 	)
-	code_box.add_theme_stylebox_override("panel", code_sb)
-	header_hbox.add_child(code_box)
+	side_vbox.add_child(public_check)
 	
-	var code_row = HBoxContainer.new()
-	code_row.add_theme_constant_override("separation", 10)
-	code_box.add_child(code_row)
+	# Add Bot option
+	add_bot_btn = Button.new()
+	add_bot_btn.text = "DODAJ BOTA (MAX 3)"
+	UITheme.style_button(add_bot_btn, Color(0.10, 0.18, 0.28), UITheme.COLOR_ACCENT_CYAN, 36, 13)
+	add_bot_btn.pressed.connect(_on_add_bot_pressed)
+	side_vbox.add_child(add_bot_btn)
 	
-	var code_title = Label.new()
-	code_title.text = "KOD POKOJU:"
-	code_title.add_theme_font_size_override("font_size", 13)
-	code_title.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
-	code_row.add_child(code_title)
+	var spacer_s = Control.new()
+	spacer_s.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	side_vbox.add_child(spacer_s)
 	
-	code_display_lbl = Label.new()
-	code_display_lbl.text = "------"
-	code_display_lbl.add_theme_font_size_override("font_size", 22)
-	code_display_lbl.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
-	code_row.add_child(code_display_lbl)
+	# START MATCH BUTTON
+	start_btn = Button.new()
+	start_btn.text = "START (MIN. 2)"
+	UITheme.style_button(start_btn, Color(0.12, 0.40, 0.25), UITheme.COLOR_SUCCESS_GREEN, 50, 18)
+	start_btn.pressed.connect(func(): start_game_requested.emit())
+	side_vbox.add_child(start_btn)
+
+# ==============================================================================
+# Map Interactive Layout & Elements
+# ==============================================================================
+
+func _build_map_interactive_elements(container: Control) -> void:
+	base_buttons.clear()
+	base_player_lbls.clear()
+	base_indicators.clear()
 	
-	copy_code_btn = Button.new()
-	copy_code_btn.text = "Kopiuj"
-	copy_code_btn.custom_minimum_size = Vector2(70, 32)
-	UITheme.style_button(copy_code_btn, UITheme.COLOR_PRIMARY, UITheme.COLOR_ACCENT_CYAN, 32, 12)
-	copy_code_btn.pressed.connect(_on_copy_code_pressed)
-	code_row.add_child(copy_code_btn)
+	# 4 Base Corner Positions (Normalized coords 0.0 to 1.0)
+	var base_configs = [
+		{"name": "B1", "anchor_x": 0.12, "anchor_y": 0.12, "color": GameState.SLOT_COLORS[0]},
+		{"name": "B2", "anchor_x": 0.88, "anchor_y": 0.12, "color": GameState.SLOT_COLORS[1]},
+		{"name": "B3", "anchor_x": 0.12, "anchor_y": 0.82, "color": GameState.SLOT_COLORS[2]},
+		{"name": "B4", "anchor_x": 0.88, "anchor_y": 0.82, "color": GameState.SLOT_COLORS[3]}
+	]
 	
-	# Rightmost: Public Toggle CheckBox
-	public_checkbox = CheckBox.new()
-	public_checkbox.text = "Lobby publiczne"
-	public_checkbox.button_pressed = true
-	public_checkbox.add_theme_font_size_override("font_size", 14)
-	public_checkbox.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MAIN)
-	public_checkbox.toggled.connect(_on_public_toggled)
-	header_hbox.add_child(public_checkbox)
+	for i in range(base_configs.size()):
+		var cfg = base_configs[i]
+		var base_btn = Button.new()
+		base_btn.custom_minimum_size = Vector2(74, 60)
+		base_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		
+		var sb_base = UITheme.create_panel_style(Color(0.06, 0.10, 0.16, 0.85), cfg.color, 4, 2, 6)
+		base_btn.add_theme_stylebox_override("normal", sb_base)
+		base_btn.add_theme_stylebox_override("hover", sb_base)
+		base_btn.add_theme_stylebox_override("pressed", sb_base)
+		
+		var idx = i
+		base_btn.pressed.connect(func(): slot_selected.emit(idx))
+		
+		# Inner text
+		var bvbox = VBoxContainer.new()
+		bvbox.alignment = BoxContainer.ALIGNMENT_CENTER
+		base_btn.add_child(bvbox)
+		
+		var b_title = Label.new()
+		b_title.text = cfg.name
+		b_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		b_title.add_theme_font_size_override("font_size", 18)
+		b_title.add_theme_color_override("font_color", Color.WHITE)
+		bvbox.add_child(b_title)
+		
+		var b_user = Label.new()
+		b_user.text = "[WOLNA]"
+		b_user.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		b_user.add_theme_font_size_override("font_size", 10)
+		b_user.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+		bvbox.add_child(b_user)
+		base_player_lbls.append(b_user)
+		
+		container.add_child(base_btn)
+		base_buttons.append(base_btn)
+		
+		# Position using layout anchors
+		base_btn.set_anchors_preset(PRESET_CENTER)
+		_position_base_button(base_btn, cfg.anchor_x, cfg.anchor_y)
+
+func _position_base_button(btn: Button, ax: float, ay: float) -> void:
+	btn.anchor_left = ax
+	btn.anchor_top = ay
+	btn.anchor_right = ax
+	btn.anchor_bottom = ay
+	btn.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	btn.grow_vertical = Control.GROW_DIRECTION_BOTH
+
+func _build_map_chat_overlay(container: Control) -> void:
+	var chat_box = PanelContainer.new()
+	chat_box.custom_minimum_size = Vector2(340, 160)
+	chat_box.set_anchors_preset(PRESET_BOTTOM_LEFT)
+	chat_box.position = Vector2(24, -184) # offset from bottom left
+	chat_box.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	
-	# ==========================================================================
-	# 2. MAIN CONTENT (SLOTS + CHAT)
-	# ==========================================================================
-	var content_hbox = HBoxContainer.new()
-	content_hbox.add_theme_constant_override("separation", 18)
-	content_hbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	main_vbox.add_child(content_hbox)
+	var sb = UITheme.create_panel_style(Color(0.03, 0.06, 0.10, 0.85), Color(0.12, 0.22, 0.35, 0.5), 4, 1, 8)
+	chat_box.add_theme_stylebox_override("panel", sb)
+	container.add_child(chat_box)
 	
-	# --- LEFT: 4 PLAYER SLOTS ---
-	var slots_panel = PanelContainer.new()
-	slots_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	slots_panel.custom_minimum_size = Vector2(460, 0)
-	slots_panel.add_theme_stylebox_override("panel", UITheme.create_panel_style(
-		UITheme.COLOR_PANEL_BG,
-		UITheme.COLOR_PANEL_BORDER,
-		8, 1, 14
-	))
-	content_hbox.add_child(slots_panel)
+	var cvbox = VBoxContainer.new()
+	cvbox.add_theme_constant_override("separation", 6)
+	chat_box.add_child(cvbox)
 	
-	var slots_vbox = VBoxContainer.new()
-	slots_vbox.add_theme_constant_override("separation", 10)
-	slots_panel.add_child(slots_vbox)
-	
-	var slots_header = Label.new()
-	slots_header.text = "POZYCJE STARTOWE I BAZY (1-4)"
-	slots_header.add_theme_font_size_override("font_size", 15)
-	slots_header.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MAIN)
-	slots_vbox.add_child(slots_header)
-	
-	slot_cards.clear()
-	slot_name_lbls.clear()
-	slot_status_lbls.clear()
-	slot_buttons.clear()
-	
-	for i in range(GameState.MAX_PLAYERS):
-		var card = _create_slot_card(i)
-		slots_vbox.add_child(card)
-		slot_cards.append(card)
-	
-	# --- RIGHT: CHAT & LOG ---
-	var chat_panel = PanelContainer.new()
-	chat_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	chat_panel.add_theme_stylebox_override("panel", UITheme.create_panel_style(
-		UITheme.COLOR_PANEL_BG,
-		UITheme.COLOR_PANEL_BORDER,
-		8, 1, 14
-	))
-	content_hbox.add_child(chat_panel)
-	
-	var chat_vbox = VBoxContainer.new()
-	chat_vbox.add_theme_constant_override("separation", 10)
-	chat_panel.add_child(chat_vbox)
-	
-	var chat_header = Label.new()
-	chat_header.text = "CZAT I KOMUNIKATY POKOJU"
-	chat_header.add_theme_font_size_override("font_size", 15)
-	chat_header.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MAIN)
-	chat_vbox.add_child(chat_header)
+	var chat_hint = Label.new()
+	chat_hint.text = "Czat lobby — T lub kliknij pole na dole. LPM na mapie zamyka"
+	chat_hint.add_theme_font_size_override("font_size", 10)
+	chat_hint.add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD)
+	cvbox.add_child(chat_hint)
 	
 	chat_log = RichTextLabel.new()
 	chat_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	chat_log.scroll_following = true
 	chat_log.bbcode_enabled = true
-	chat_log.add_theme_stylebox_override("normal", UITheme.create_panel_style(
-		Color(0.04, 0.06, 0.09, 0.9),
-		Color(0.12, 0.22, 0.35, 0.6),
-		6, 1, 8
-	))
-	chat_vbox.add_child(chat_log)
-	
-	var chat_input_row = HBoxContainer.new()
-	chat_input_row.add_theme_constant_override("separation", 8)
-	chat_vbox.add_child(chat_input_row)
+	cvbox.add_child(chat_log)
 	
 	chat_input = LineEdit.new()
-	chat_input.placeholder_text = "Napisz wiadomość na czacie..."
-	chat_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	UITheme.style_line_edit(chat_input)
+	chat_input.placeholder_text = "T — napisz wiadomość..."
+	UITheme.style_line_edit(chat_input, 12)
 	chat_input.text_submitted.connect(_on_chat_submitted)
-	chat_input_row.add_child(chat_input)
-	
-	var send_btn = Button.new()
-	send_btn.text = "Wyślij"
-	send_btn.custom_minimum_size = Vector2(80, 38)
-	UITheme.style_button(send_btn, UITheme.COLOR_PRIMARY, UITheme.COLOR_ACCENT_CYAN, 38, 14)
-	send_btn.pressed.connect(_on_send_btn_pressed)
-	chat_input_row.add_child(send_btn)
-	
-	# ==========================================================================
-	# 3. BOTTOM CONTROLS
-	# ==========================================================================
-	var bottom_panel = PanelContainer.new()
-	bottom_panel.add_theme_stylebox_override("panel", UITheme.create_panel_style(
-		UITheme.COLOR_PANEL_BG,
-		UITheme.COLOR_PANEL_BORDER,
-		8, 1, 12
-	))
-	main_vbox.add_child(bottom_panel)
-	
-	var bottom_hbox = HBoxContainer.new()
-	bottom_hbox.add_theme_constant_override("separation", 16)
-	bottom_panel.add_child(bottom_hbox)
-	
-	leave_btn = Button.new()
-	leave_btn.text = "OPUŚĆ LOBBY"
-	leave_btn.custom_minimum_size = Vector2(160, 44)
-	UITheme.style_button(leave_btn, Color(0.35, 0.12, 0.14, 1.0), UITheme.COLOR_DANGER_RED, 44, 15)
-	leave_btn.pressed.connect(func(): leave_lobby_requested.emit())
-	bottom_hbox.add_child(leave_btn)
-	
-	var spacer_b = Control.new()
-	spacer_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bottom_hbox.add_child(spacer_b)
-	
-	ready_btn = Button.new()
-	ready_btn.text = "ZAZNACZ GOTOWOŚĆ"
-	ready_btn.custom_minimum_size = Vector2(200, 44)
-	UITheme.style_button(ready_btn, UITheme.COLOR_PRIMARY, UITheme.COLOR_ACCENT_CYAN, 44, 15)
-	ready_btn.pressed.connect(func(): ready_toggled.emit())
-	bottom_hbox.add_child(ready_btn)
-	
-	start_btn = Button.new()
-	start_btn.text = "ROZPOCZNIJ ROZGRYWKĘ"
-	start_btn.custom_minimum_size = Vector2(230, 44)
-	UITheme.style_button(start_btn, Color(0.12, 0.42, 0.25, 1.0), UITheme.COLOR_SUCCESS_GREEN, 44, 16)
-	start_btn.pressed.connect(func(): start_game_requested.emit())
-	bottom_hbox.add_child(start_btn)
+	cvbox.add_child(chat_input)
 
-func _create_slot_card(slot_idx: int) -> PanelContainer:
-	var card = PanelContainer.new()
-	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	card.custom_minimum_size = Vector2(0, 52)
+# ==============================================================================
+# Map Canvas Drawing (Grid, Boss Zone, Camps)
+# ==============================================================================
+
+func _on_map_canvas_draw() -> void:
+	if map_canvas == null: return
+	var rect = map_canvas.get_rect()
+	var w = rect.size.x
+	var h = rect.size.y
 	
-	var color_slot = GameState.SLOT_COLORS[slot_idx]
-	var sb = UITheme.create_panel_style(
-		Color(0.06, 0.09, 0.14, 0.85),
-		color_slot.darkened(0.3),
-		6, 1, 8
-	)
-	card.add_theme_stylebox_override("panel", sb)
+	# Draw Tactical Blueprint Grid
+	var grid_step = 40.0
+	var grid_color = Color(0.08, 0.14, 0.22, 0.35)
 	
-	var row = HBoxContainer.new()
-	row.add_theme_constant_override("separation", 12)
-	card.add_child(row)
+	var x = 0.0
+	while x < w:
+		map_canvas.draw_line(Vector2(x, 0), Vector2(x, h), grid_color, 1.0)
+		x += grid_step
+		
+	var y = 0.0
+	while y < h:
+		map_canvas.draw_line(Vector2(0, y), Vector2(w, y), grid_color, 1.0)
+		y += grid_step
+		
+	# Draw Center Boss Area
+	var center = Vector2(w * 0.5, h * 0.5)
+	var boss_box_size = Vector2(110, 90)
+	var boss_rect = Rect2(center - boss_box_size * 0.5, boss_box_size)
+	map_canvas.draw_rect(boss_rect, Color(0.0, 0.4, 0.5, 0.2), true)
+	map_canvas.draw_rect(boss_rect, UITheme.COLOR_ACCENT_CYAN.darkened(0.4), false, 1.5)
+	map_canvas.draw_circle(center, 18.0, Color(0.9, 0.2, 0.2, 0.85))
 	
-	var color_box = ColorRect.new()
-	color_box.custom_minimum_size = Vector2(16, 32)
-	color_box.color = color_slot
-	row.add_child(color_box)
+	# Draw Boss text
+	map_canvas.draw_string(ThemeDB.fallback_font, center + Vector2(-30, -26), "BOSS", HORIZONTAL_ALIGNMENT_CENTER, -1, 10, UITheme.COLOR_TEXT_MUTED)
+	map_canvas.draw_string(ThemeDB.fallback_font, center + Vector2(-30, 32), "Strefa", HORIZONTAL_ALIGNMENT_CENTER, -1, 13, UITheme.COLOR_ACCENT_CYAN)
 	
-	var text_box = VBoxContainer.new()
-	text_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(text_box)
-	
-	var base_title = Label.new()
-	base_title.text = GameState.SLOT_NAMES[slot_idx]
-	base_title.add_theme_font_size_override("font_size", 11)
-	base_title.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
-	text_box.add_child(base_title)
-	
-	var p_name_lbl = Label.new()
-	p_name_lbl.text = "Wolny slot"
-	p_name_lbl.add_theme_font_size_override("font_size", 14)
-	p_name_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
-	text_box.add_child(p_name_lbl)
-	slot_name_lbls.append(p_name_lbl)
-	
-	var status_lbl = Label.new()
-	status_lbl.text = "[WOLNY]"
-	status_lbl.add_theme_font_size_override("font_size", 13)
-	status_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
-	row.add_child(status_lbl)
-	slot_status_lbls.append(status_lbl)
-	
-	var btn_take = Button.new()
-	btn_take.text = "Zajmij"
-	btn_take.custom_minimum_size = Vector2(70, 30)
-	UITheme.style_button(btn_take, Color(0.12, 0.22, 0.35), color_slot, 30, 12)
-	btn_take.pressed.connect(func(): slot_selected.emit(slot_idx))
-	row.add_child(btn_take)
-	slot_buttons.append(btn_take)
-	
-	return card
+	# Draw Neutral Camps (OBÓZ)
+	var camps = [
+		Vector2(w * 0.35, h * 0.35),
+		Vector2(w * 0.65, h * 0.35),
+		Vector2(w * 0.35, h * 0.65),
+		Vector2(w * 0.65, h * 0.65)
+	]
+	for c_pos in camps:
+		map_canvas.draw_circle(c_pos, 10.0, UITheme.COLOR_ACCENT_ORANGE)
+		map_canvas.draw_string(ThemeDB.fallback_font, c_pos + Vector2(-16, -14), "OBÓZ", HORIZONTAL_ALIGNMENT_CENTER, -1, 9, UITheme.COLOR_TEXT_MUTED)
+
+# ==============================================================================
+# State Updates & Synchronization
+# ==============================================================================
 
 func update_lobby_state(players: Array, is_host: bool, local_peer_id: int) -> void:
-	if network_manager != null and not network_manager.room_code.is_empty():
-		code_display_lbl.text = network_manager.room_code
-		
-	if is_host:
-		header_title_lbl.text = "LOBBY ROZGRYWKI (JESTEŚ HOSTEM)"
-		start_btn.visible = true
-		public_checkbox.visible = true
-		public_checkbox.disabled = false
-	else:
-		header_title_lbl.text = "LOBBY ROZGRYWKI (KLIENT)"
-		start_btn.visible = false
-		public_checkbox.visible = true
-		public_checkbox.disabled = true
-		
-	if network_manager != null:
-		public_checkbox.set_pressed_no_signal(network_manager.is_public)
-		
-	# Reset slots
+	_update_room_code_display()
+	
+	# Reset base markers
 	for i in range(GameState.MAX_PLAYERS):
-		slot_name_lbls[i].text = "Wolny slot"
-		slot_name_lbls[i].add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
-		slot_status_lbls[i].text = "[WOLNY]"
-		slot_status_lbls[i].add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
-		slot_buttons[i].visible = true
-		slot_buttons[i].disabled = false
-
+		base_player_lbls[i].text = "[WOLNA]"
+		base_player_lbls[i].add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+		
+	# Clear player list on sidebar
+	for c in player_list_vbox.get_children():
+		c.queue_free()
+		
 	var all_ready = true
+	var count = players.size()
+	
 	for p in players:
-		var slot_idx: int = p.slot
-		if slot_idx >= 0 and slot_idx < GameState.MAX_PLAYERS:
-			var is_me = (p.peer_id == local_peer_id)
-			var name_display = p.name
-			if is_me:
-				name_display += " (TY)"
-			if p.is_host:
-				name_display += " 👑"
-				
-			slot_name_lbls[slot_idx].text = name_display
-			slot_name_lbls[slot_idx].add_theme_color_override("font_color", UITheme.COLOR_TEXT_MAIN)
+		# Update base button label
+		if p.slot >= 0 and p.slot < GameState.MAX_PLAYERS:
+			var slot_name = p.name
+			if p.is_host: slot_name += " 👑"
+			base_player_lbls[p.slot].text = slot_name
+			base_player_lbls[p.slot].add_theme_color_override("font_color", Color.WHITE)
 			
-			if p.is_host:
-				slot_status_lbls[slot_idx].text = "[HOST]"
-				slot_status_lbls[slot_idx].add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD)
-			elif p.is_ready:
-				slot_status_lbls[slot_idx].text = "[GOTOWY]"
-				slot_status_lbls[slot_idx].add_theme_color_override("font_color", UITheme.COLOR_SUCCESS_GREEN)
-			else:
-				slot_status_lbls[slot_idx].text = "[CZEKA]"
-				slot_status_lbls[slot_idx].add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD)
-				all_ready = false
-				
-			slot_buttons[slot_idx].visible = false
+		# Add to right sidebar
+		var p_card = Label.new()
+		var desc = p.name
+		if p.is_host: desc += " · HOST"
+		desc += " · BAZA %d" % (p.slot + 1)
+		p_card.text = desc
+		p_card.add_theme_font_size_override("font_size", 13)
+		p_card.add_theme_color_override("font_color", Color.WHITE if not p.is_host else UITheme.COLOR_WARNING_GOLD)
+		player_list_vbox.add_child(p_card)
+		
+		if not p.is_ready and not p.is_host:
+			all_ready = false
 
-	# Update Ready button
-	for p in players:
-		if p.peer_id == local_peer_id:
-			if p.is_host:
-				ready_btn.visible = false
-			else:
-				ready_btn.visible = true
-				if p.is_ready:
-					ready_btn.text = "ZMIEŃ NA: NIEGOTOWY"
-					UITheme.style_button(ready_btn, Color(0.35, 0.22, 0.12), UITheme.COLOR_WARNING_GOLD, 44, 15)
-				else:
-					ready_btn.text = "ZAZNACZ GOTOWOŚĆ"
-					UITheme.style_button(ready_btn, UITheme.COLOR_PRIMARY, UITheme.COLOR_ACCENT_CYAN, 44, 15)
-
+	# Host controls visibility
 	if is_host:
-		start_btn.disabled = not all_ready
+		header_status_lbl.text = "Jesteś Hostem — wybierz bazę i kliknij Start"
+		start_btn.visible = true
+		start_btn.disabled = false
+		start_btn.text = "START ROZGRYWKI" if count >= 1 else "START (MIN. 2)"
+	else:
+		header_status_lbl.text = "Oczekiwanie na start przez Hosta..."
+		start_btn.visible = false
 
 func add_chat_entry(sender: String, message: String, is_system: bool = false) -> void:
 	if is_system:
 		chat_log.append_text("[color=#ffd166][b]📢 %s:[/b] %s[/color]\n" % [sender, message])
 	else:
-		chat_log.append_text("[color=#2ec4b6][b]%s:[/b][/color] %s\n" % [sender, message])
+		chat_log.append_text("[color=#00f0ff][b]%s:[/b][/color] %s\n" % [sender, message])
 
-func _update_header_info() -> void:
-	if network_manager == null:
-		return
-		
-	var info_text = ""
-	if network_manager.is_host:
-		info_text = "Twoje IP Hosta: %s | Port: %d" % [network_manager.host_ip, network_manager.server_port]
-	else:
-		info_text = "Połączono z serwerem: %s:%d" % [network_manager.server_ip, network_manager.server_port]
-		
-	header_info_lbl.text = info_text
-	code_display_lbl.text = network_manager.room_code if not network_manager.room_code.is_empty() else "------"
+func _update_room_code_display() -> void:
+	if network_manager != null and not network_manager.room_code.is_empty():
+		code_lbl.text = network_manager.room_code
 
-func _on_public_status_changed(is_pub: bool) -> void:
-	public_checkbox.set_pressed_no_signal(is_pub)
+func _change_points(delta_pts: int) -> void:
+	current_points = clampi(current_points + delta_pts, 400, 5000)
+	points_val_lbl.text = str(current_points)
+	match_settings_changed.emit(is_creative, current_points, current_duration)
 
-func _on_public_toggled(button_pressed: bool) -> void:
-	if network_manager != null and network_manager.is_host:
-		network_manager.set_lobby_public(button_pressed)
-		public_toggled.emit(button_pressed)
+func _change_duration(delta_dur: int) -> void:
+	current_duration = clampi(current_duration + delta_dur, 10, 120)
+	duration_val_lbl.text = str(current_duration)
+	match_settings_changed.emit(is_creative, current_points, current_duration)
+
+func _on_add_bot_pressed() -> void:
+	add_chat_entry("SYSTEM", "Dodano wirtualnego Bota do wolnej bazy.", true)
 
 func _on_copy_code_pressed() -> void:
-	if network_manager != null and not network_manager.room_code.is_empty():
+	if network_manager and not network_manager.room_code.is_empty():
 		DisplayServer.clipboard_set(network_manager.room_code)
-		copy_code_btn.text = "Skopiowano!"
-		var timer = get_tree().create_timer(1.5)
-		timer.timeout.connect(func():
-			if copy_code_btn: copy_code_btn.text = "Kopiuj"
-		)
+		add_chat_entry("SYSTEM", "Skopiowano kod pokoju (%s) do schowka!" % network_manager.room_code, true)
 
 func _on_chat_submitted(text: String) -> void:
 	var clean = text.strip_edges()
 	if not clean.is_empty():
 		chat_submitted.emit(clean)
 		chat_input.clear()
-
-func _on_send_btn_pressed() -> void:
-	_on_chat_submitted(chat_input.text)
