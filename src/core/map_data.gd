@@ -66,6 +66,7 @@ class BaseSpawn:
 
 var seed_value: int = 0
 var width: int = MAP_SIZE
+var height: int = MAP_SIZE
 var bases: Array = []
 var resources: Array = []
 var camps: Array = []
