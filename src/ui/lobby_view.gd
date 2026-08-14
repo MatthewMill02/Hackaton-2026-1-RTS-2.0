@@ -32,6 +32,7 @@ var points_val_lbl: Label
 var duration_val_lbl: Label
 var public_check: CheckBox
 var add_bot_btn: Button
+var ready_btn: Button
 var start_btn: Button
 var exit_btn: Button
 
@@ -289,7 +290,14 @@ func _build_ui() -> void:
 	spacer_s.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	side_vbox.add_child(spacer_s)
 	
-	# START MATCH BUTTON
+	# READY BUTTON (For non-host players)
+	ready_btn = Button.new()
+	ready_btn.text = "ZAZNACZ GOTOWOŚĆ"
+	UITheme.style_button(ready_btn, Color(0.12, 0.28, 0.44), UITheme.COLOR_ACCENT_CYAN, 54, 18)
+	ready_btn.pressed.connect(func(): ready_toggled.emit())
+	side_vbox.add_child(ready_btn)
+	
+	# START MATCH BUTTON (For host)
 	start_btn = Button.new()
 	start_btn.text = "START (MIN. 2)"
 	UITheme.style_button(start_btn, Color(0.12, 0.40, 0.25), UITheme.COLOR_SUCCESS_GREEN, 54, 20)
@@ -566,20 +574,37 @@ func update_lobby_state(players: Array, is_host: bool, local_peer_id: int) -> vo
 		c.queue_free()
 		
 	var count = players.size()
+	var local_is_ready = false
+	var all_clients_ready = true
+	
 	for p in players:
+		if p.peer_id == local_peer_id:
+			local_is_ready = p.is_ready
+		if not p.is_host and not p.is_ready:
+			all_clients_ready = false
+			
 		var slot_col = GameState.SLOT_COLORS[p.slot] if p.slot < GameState.SLOT_COLORS.size() else UITheme.COLOR_ACCENT_CYAN
 		
-		# Update base button label
+		# Update base button label on map preview
 		if p.slot >= 0 and p.slot < GameState.MAX_PLAYERS:
 			var slot_name = p.name
-			if p.is_host: slot_name += " 👑"
+			if p.is_host:
+				slot_name += " 👑"
+			elif p.is_ready:
+				slot_name += " ✓"
 			base_player_lbls[p.slot].text = slot_name
 			base_player_lbls[p.slot].add_theme_color_override("font_color", slot_col)
 			
 		# Add to right sidebar
 		var p_card = Label.new()
 		var desc = p.name
-		if p.is_host: desc += " · HOST"
+		if p.is_host:
+			desc += " 👑 [HOST]"
+		else:
+			if p.is_ready:
+				desc += " [GOTOWY ✓]"
+			else:
+				desc += " [CZEKA... ⏳]"
 		desc += " · BAZA %d" % (p.slot + 1)
 		p_card.text = desc
 		p_card.add_theme_font_size_override("font_size", 16)
@@ -587,13 +612,29 @@ func update_lobby_state(players: Array, is_host: bool, local_peer_id: int) -> vo
 		player_list_vbox.add_child(p_card)
 
 	if is_host:
-		header_status_lbl.text = "Jesteś Hostem — wybierz bazę i kliknij Start"
+		ready_btn.visible = false
 		start_btn.visible = true
-		start_btn.disabled = false
-		start_btn.text = "START ROZGRYWKI" if count >= 1 else "START (MIN. 2)"
+		
+		if count > 1 and not all_clients_ready:
+			start_btn.text = "START (CZEKA NA GRACZY)"
+			UITheme.style_button(start_btn, Color(0.28, 0.20, 0.10), UITheme.COLOR_WARNING_GOLD, 54, 18)
+			header_status_lbl.text = "Oczekiwanie na gotowość pozostałych graczy..."
+		else:
+			start_btn.text = "START ROZGRYWKI" if count >= 1 else "START (MIN. 2)"
+			UITheme.style_button(start_btn, Color(0.12, 0.40, 0.25), UITheme.COLOR_SUCCESS_GREEN, 54, 20)
+			header_status_lbl.text = "Wszyscy gotowi — wybierz bazę i kliknij Start" if (count > 1 and all_clients_ready) else "Jesteś Hostem — wybierz bazę i kliknij Start"
 	else:
-		header_status_lbl.text = "Oczekiwanie na start przez Hosta..."
 		start_btn.visible = false
+		ready_btn.visible = true
+		
+		if local_is_ready:
+			ready_btn.text = "ANULUJ GOTOWOŚĆ (GOTOWY ✓)"
+			UITheme.style_button(ready_btn, Color(0.12, 0.40, 0.25), UITheme.COLOR_SUCCESS_GREEN, 54, 18)
+			header_status_lbl.text = "Jesteś gotowy! Oczekiwanie na start przez Hosta..."
+		else:
+			ready_btn.text = "ZAZNACZ GOTOWOŚĆ"
+			UITheme.style_button(ready_btn, Color(0.12, 0.28, 0.44), UITheme.COLOR_ACCENT_CYAN, 54, 18)
+			header_status_lbl.text = "Wybierz bazę i kliknij 'ZAZNACZ GOTOWOŚĆ'"
 
 func add_chat_entry(sender: String, message: String, is_system: bool = false) -> void:
 	if is_system:
