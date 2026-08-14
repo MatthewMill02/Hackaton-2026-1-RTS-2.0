@@ -60,8 +60,8 @@ func _init(p_net: NetworkManager = null, p_settings: SettingsManager = null, p_m
 	else:
 		active_map = MapGenerator.generate_map()
 		
-	if network_manager != null and network_manager.local_player_data != null:
-		local_slot = network_manager.local_player_data.slot
+	if network_manager != null and network_manager.local_player != null:
+		local_slot = network_manager.local_player.slot
 		
 	set_anchors_preset(PRESET_FULL_RECT)
 

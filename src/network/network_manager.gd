@@ -15,6 +15,9 @@ var discovery: LobbyDiscovery = null
 
 var players: Dictionary = {} # peer_id: int -> PlayerData
 var local_player: PlayerData = null
+var local_player_data: PlayerData:
+	get:
+		return local_player
 var is_host: bool = false
 var host_ip: String = "127.0.0.1"
 var server_ip: String = "127.0.0.1"
@@ -161,7 +164,10 @@ func toggle_ready() -> void:
 func change_slot(desired_slot: int) -> void:
 	if local_player == null or desired_slot < 0 or desired_slot >= GameState.MAX_PLAYERS:
 		return
-	rpc_id(1, "request_slot_change", multiplayer.get_unique_id(), desired_slot)
+	if multiplayer.is_server():
+		_perform_slot_change(1, desired_slot)
+	else:
+		rpc_id(1, "request_slot_change", multiplayer.get_unique_id(), desired_slot)
 
 func send_chat(message: String) -> void:
 	var clean_msg = message.strip_edges()
@@ -279,8 +285,13 @@ func register_player(data: Dictionary) -> void:
 	rpc_id(sender_id, "sync_lobby_settings", room_code, is_public)
 	rpc("receive_chat", "SYSTEM", "%s dołączył do lobby!" % new_player.name, true)
 
-@rpc("any_peer", "reliable")
+@rpc("any_peer", "call_local", "reliable")
 func request_slot_change(sender_id: int, target_slot: int) -> void:
+	if not multiplayer.is_server():
+		return
+	_perform_slot_change(sender_id, target_slot)
+
+func _perform_slot_change(sender_id: int, target_slot: int) -> void:
 	if not multiplayer.is_server():
 		return
 		
@@ -288,13 +299,16 @@ func request_slot_change(sender_id: int, target_slot: int) -> void:
 		return
 		
 	for p in players.values():
-		if p.slot == target_slot:
+		if p.slot == target_slot and p.peer_id != sender_id:
 			return
 			
 	if players.has(sender_id):
 		var p: PlayerData = players[sender_id]
 		p.slot = target_slot
 		p.color = GameState.SLOT_COLORS[target_slot]
+		if sender_id == multiplayer.get_unique_id() and local_player != null:
+			local_player.slot = target_slot
+			local_player.color = GameState.SLOT_COLORS[target_slot]
 		_broadcast_player_list()
 		var slot_names = ["Niebieską (Baza 1)", "Czerwoną (Baza 2)", "Zieloną (Baza 3)", "Żółtą (Baza 4)"]
 		var s_name = slot_names[target_slot] if target_slot < slot_names.size() else "Bazę %d" % (target_slot + 1)
