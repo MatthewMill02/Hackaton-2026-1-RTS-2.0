@@ -25,6 +25,9 @@ var target_score: int = 1200
 var is_paused: bool = false
 var is_game_over: bool = false
 var local_slot: int = 0
+var kills_count: int = 0
+var camps_count: int = 0
+var buildings_built_count: int = 1
 
 # UI Labels
 var res_stone_lbl: Label
@@ -1344,6 +1347,8 @@ func _open_lab_research_modal(b: BuildingSystem.BuildingInstance) -> void:
 
 func _on_camp_destroyed(camp_node: MapData.CampNode, killer_slot: int) -> void:
 	current_score += 300 if camp_node.type == MapData.CampType.BOSS else 100
+	if killer_slot == local_slot:
+		camps_count += 1
 	if score_lbl != null:
 		score_lbl.text = "★ %d / %d pkt" % [current_score, target_score]
 		
@@ -1355,6 +1360,7 @@ func _on_camp_destroyed(camp_node: MapData.CampNode, killer_slot: int) -> void:
 	_update_resource_labels()
 
 func _on_unit_killed_reward(stone: int, iron: int, oil: int, redstone: int) -> void:
+	kills_count += 1
 	in_game_chat_log.append_text("[color=#38bdf8]💀 [b]POKONANO WROGA![/b] Zdobyto: +%d Kamień, +%d Żelazo, +%d Ropa, +%d Czerwienit[/color]\n" % [stone, iron, oil, redstone])
 	_add_score(15, "Zabicie jednostki (+15 pkt)")
 	_update_resource_labels()
@@ -1468,7 +1474,7 @@ func _toggle_esc_settings_modal() -> void:
 
 func _show_scoreboard() -> void:
 	if scoreboard_overlay == null or not is_instance_valid(scoreboard_overlay):
-		scoreboard_overlay = ScoreboardModal.new(network_manager, settings_manager, target_score, match_timer_seconds)
+		scoreboard_overlay = ScoreboardModal.new(network_manager, settings_manager, target_score, buildings, units, economy, local_slot, self)
 		add_child(scoreboard_overlay)
 
 func _hide_scoreboard() -> void:
