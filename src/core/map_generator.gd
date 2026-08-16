@@ -39,7 +39,7 @@ static func generate_map(seed_val: int = 0) -> MapData:
 	for dy in range(-3, 4):
 		for dx in range(-3, 4):
 			occupied[center + Vector2i(dx, dy)] = true
-	map.camps.append(MapData.CampNode.new(MapData.CampType.BOSS, center, 3000))
+	map.camps.append(MapData.CampNode.new(MapData.CampType.BOSS, center, 4000, 4000))
 	
 	# 3. Neutral Camps (4 around center)
 	var camp_positions = [
@@ -52,7 +52,7 @@ static func generate_map(seed_val: int = 0) -> MapData:
 		for dy in range(-1, 2):
 			for dx in range(-1, 2):
 				occupied[c_pos + Vector2i(dx, dy)] = true
-		map.camps.append(MapData.CampNode.new(MapData.CampType.CAMP, c_pos, 800))
+		map.camps.append(MapData.CampNode.new(MapData.CampType.CAMP, c_pos, 1200, 1200))
 		
 	# 4. Generate Resources for Each Base
 	for b in map.bases:

@@ -37,22 +37,27 @@ class CampNode:
 	var hp: int
 	var max_hp: int
 	
-	func _init(p_type: CampType, p_pos: Vector2i, p_hp: int) -> void:
+	func _init(p_type: CampType, p_pos: Vector2i, p_hp: int, p_max_hp: int = -1) -> void:
 		type = p_type
 		grid_pos = p_pos
 		hp = p_hp
-		max_hp = p_hp
+		max_hp = p_hp if p_max_hp < 0 else p_max_hp
 		
 	func to_dict() -> Dictionary:
 		return {
 			"type": type,
 			"x": grid_pos.x,
 			"y": grid_pos.y,
-			"hp": hp
+			"hp": hp,
+			"max_hp": max_hp
 		}
 		
 	static func from_dict(d: Dictionary) -> CampNode:
-		return CampNode.new(d.get("type", CampType.CAMP), Vector2i(d.get("x", 0), d.get("y", 0)), d.get("hp", 800))
+		var c_type = d.get("type", CampType.CAMP)
+		var default_hp = 4000 if c_type == CampType.BOSS else 1200
+		var c_hp = d.get("hp", default_hp)
+		var c_max = d.get("max_hp", default_hp)
+		return CampNode.new(c_type, Vector2i(d.get("x", 0), d.get("y", 0)), c_hp, c_max)
 
 class BaseSpawn:
 	var slot: int

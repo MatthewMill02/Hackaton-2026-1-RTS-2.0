@@ -70,6 +70,8 @@ var building_card_popup: PanelContainer = null
 var snapshot_timer: float = 0.0
 var f3_diagnostics_overlay: PanelContainer = null
 var f3_diag_labels: Dictionary = {}
+var camp_card_popup: PanelContainer = null
+var last_hovered_camp: MapData.CampNode = null
 
 func _init(p_net: NetworkManager = null, p_settings: SettingsManager = null, p_map: MapData = null) -> void:
 	network_manager = p_net
@@ -663,6 +665,128 @@ func _hide_building_card() -> void:
 		building_card_popup.queue_free()
 		building_card_popup = null
 
+func _show_camp_card(camp: MapData.CampNode, screen_pos: Vector2) -> void:
+	if camp == null or camp.hp <= 0:
+		_hide_camp_card()
+		return
+		
+	if camp_card_popup != null and last_hovered_camp == camp and is_instance_valid(camp_card_popup):
+		_position_camp_card(screen_pos)
+		return
+		
+	_hide_camp_card()
+	last_hovered_camp = camp
+	
+	camp_card_popup = PanelContainer.new()
+	camp_card_popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	camp_card_popup.custom_minimum_size = Vector2(360, 0)
+	var is_boss = (camp.type == MapData.CampType.BOSS)
+	var border_col = UITheme.COLOR_WARNING_GOLD if is_boss else UITheme.COLOR_ACCENT_ORANGE
+	var sb = UITheme.create_panel_style(Color(0.02, 0.05, 0.10, 0.96), border_col, 6, 2, 14)
+	camp_card_popup.add_theme_stylebox_override("panel", sb)
+	add_child(camp_card_popup)
+	
+	var vbox = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	camp_card_popup.add_child(vbox)
+	
+	# Header
+	var title_lbl = Label.new()
+	title_lbl.text = "☠️ CYBER-BEHEMOTH [BOSS 2.0]" if is_boss else "⚔️ WROGIE OBOZOWISKO [POZIOM 2]"
+	title_lbl.add_theme_font_size_override("font_size", 15)
+	title_lbl.add_theme_color_override("font_color", border_col)
+	vbox.add_child(title_lbl)
+	
+	var sub_lbl = Label.new()
+	sub_lbl.text = "ZAGROŻENIE: EKSTREMALNE · BASTION CENTRALNY" if is_boss else "ZAGROŻENIE: ŚREDNIE · UGRUPOWANIE ZBUNTOWANYCH ROBOTÓW"
+	sub_lbl.add_theme_font_size_override("font_size", 11)
+	sub_lbl.add_theme_color_override("font_color", Color(1.0, 0.35, 0.35) if is_boss else Color(1.0, 0.7, 0.2))
+	vbox.add_child(sub_lbl)
+	
+	var sep1 = HSeparator.new()
+	sep1.add_theme_stylebox_override("separator", UITheme.create_separator_style(border_col))
+	vbox.add_child(sep1)
+	
+	# HP Stat
+	var hp_row = HBoxContainer.new()
+	vbox.add_child(hp_row)
+	var hp_title = Label.new()
+	hp_title.text = "❤️ Punkty Życia:"
+	hp_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hp_title.add_theme_font_size_override("font_size", 12)
+	hp_title.add_theme_color_override("font_color", UITheme.COLOR_TEXT_LIGHT)
+	hp_row.add_child(hp_title)
+	
+	var hp_val = Label.new()
+	var pct = int((float(camp.hp) / float(camp.max_hp)) * 100.0)
+	hp_val.text = "%d / %d HP (%d%%)" % [camp.hp, camp.max_hp, pct]
+	hp_val.add_theme_font_size_override("font_size", 12)
+	hp_val.add_theme_color_override("font_color", UITheme.COLOR_SUCCESS_GREEN if pct > 40 else UITheme.COLOR_ACCENT_RED)
+	hp_row.add_child(hp_val)
+	
+	# Defense stat
+	var def_row = HBoxContainer.new()
+	vbox.add_child(def_row)
+	var def_title = Label.new()
+	def_title.text = "🛡️ Pancerz / Odporność:"
+	def_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	def_title.add_theme_font_size_override("font_size", 12)
+	def_title.add_theme_color_override("font_color", UITheme.COLOR_TEXT_LIGHT)
+	def_row.add_child(def_title)
+	
+	var def_val = Label.new()
+	def_val.text = "Pancerz Ciężki Tytanowy" if is_boss else "Pancerz Średni Wzmocniony"
+	def_val.add_theme_font_size_override("font_size", 12)
+	def_val.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
+	def_row.add_child(def_val)
+	
+	var sep2 = HSeparator.new()
+	sep2.add_theme_stylebox_override("separator", UITheme.create_separator_style(Color(0.2, 0.3, 0.4, 0.4)))
+	vbox.add_child(sep2)
+	
+	# Loot Section
+	var loot_title = Label.new()
+	loot_title.text = "🎁 GWARANTOWANY ŁUP PO ZNISZCZENIU:"
+	loot_title.add_theme_font_size_override("font_size", 12)
+	loot_title.add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD)
+	vbox.add_child(loot_title)
+	
+	var loot_res = Label.new()
+	if is_boss:
+		loot_res.text = "• +300 🪨 Kamień  • +300 ⚙️ Żelazo  • +150 🛢️ Ropa\n• 🧬 1x Rzadka Karta Technologii do Przetwórni\n• 🏆 +300 punktów zwycięstwa meczu"
+	else:
+		loot_res.text = "• +100 🪨 Kamień  • +100 ⚙️ Żelazo  • +50 🛢️ Ropa\n• 🧬 1x Karta Badań Przetwórni Danych\n• 🏆 +100 punktów zwycięstwa meczu"
+	loot_res.add_theme_font_size_override("font_size", 11)
+	loot_res.add_theme_color_override("font_color", UITheme.COLOR_SUCCESS_GREEN)
+	vbox.add_child(loot_res)
+	
+	# Tactical Hint
+	var hint_lbl = Label.new()
+	hint_lbl.text = "Kliknij PPM swoimi jednostkami, aby wydać rozkaz natarcia."
+	hint_lbl.add_theme_font_size_override("font_size", 10)
+	hint_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+	vbox.add_child(hint_lbl)
+	
+	_position_camp_card(screen_pos)
+
+func _position_camp_card(screen_pos: Vector2) -> void:
+	if camp_card_popup == null: return
+	var vp_sz = get_viewport_rect().size
+	var target_pos = screen_pos + Vector2(20, -30)
+	if target_pos.x + 370 > vp_sz.x:
+		target_pos.x = screen_pos.x - 370
+	if target_pos.y + 250 > vp_sz.y:
+		target_pos.y = vp_sz.y - 260
+	if target_pos.y < 10:
+		target_pos.y = 10
+	camp_card_popup.global_position = target_pos
+
+func _hide_camp_card() -> void:
+	if camp_card_popup != null and is_instance_valid(camp_card_popup):
+		camp_card_popup.queue_free()
+		camp_card_popup = null
+	last_hovered_camp = null
+
 func _build_in_game_chat_overlay() -> void:
 	var chat_box = PanelContainer.new()
 	chat_box.set_anchors_preset(PRESET_BOTTOM_LEFT)
@@ -1021,21 +1145,51 @@ func _on_map_draw() -> void:
 		var ly = origin.y + gy * tile_sz
 		map_viewport.draw_line(Vector2(origin.x, ly), Vector2(origin.x + active_map.width * tile_sz, ly), grid_col, 1.0)
 		
-	# 3. Boss Area & Neutral Camps
+	# 3. Boss Area & Neutral Camps 2.0
 	for c in active_map.camps:
-		var c_world = origin + Vector2((c.grid_pos.x + 0.5) * tile_sz, (c.grid_pos.y + 0.5) * tile_sz)
 		if c.hp <= 0: continue
+		var c_world = origin + Vector2((c.grid_pos.x + 0.5) * tile_sz, (c.grid_pos.y + 0.5) * tile_sz)
 		if c.type == MapData.CampType.BOSS:
-			var boss_box = Rect2(c_world - Vector2(tile_sz * 2, tile_sz * 2), Vector2(tile_sz * 4, tile_sz * 4))
-			map_viewport.draw_rect(boss_box, Color(0.0, 0.4, 0.5, 0.2), true)
-			map_viewport.draw_rect(boss_box, UITheme.COLOR_ACCENT_CYAN, false, 2.0)
-			map_viewport.draw_circle(c_world, tile_sz * 1.0, Color(0.9, 0.2, 0.2, 0.85))
-			map_viewport.draw_string(ThemeDB.fallback_font, c_world + Vector2(-22, -10), "BOSS", HORIZONTAL_ALIGNMENT_CENTER, -1, 16, UITheme.COLOR_TEXT_MUTED)
-			_draw_health_bar(c_world + Vector2(0, tile_sz * 1.2), c.hp, 3000, 60.0 * map_zoom)
+			# Boss 2.0: 5x5 restricted zone with hazard crosshatch and 3x3 fortified bastion
+			var boss_zone = Rect2(c_world - Vector2(tile_sz * 2.5, tile_sz * 2.5), Vector2(tile_sz * 5.0, tile_sz * 5.0))
+			map_viewport.draw_rect(boss_zone, Color(0.35, 0.05, 0.08, 0.20), true)
+			map_viewport.draw_rect(boss_zone, Color(0.95, 0.25, 0.25, 0.75), false, 2.0)
+			
+			# Fortified Bastion Core (3x3)
+			var core_rect = Rect2(c_world - Vector2(tile_sz * 1.5, tile_sz * 1.5), Vector2(tile_sz * 3.0, tile_sz * 3.0))
+			map_viewport.draw_rect(core_rect, Color(0.10, 0.02, 0.04, 0.90), true)
+			map_viewport.draw_rect(core_rect, UITheme.COLOR_WARNING_GOLD, false, 2.5)
+			
+			# Pulsating Central Core Reactor
+			map_viewport.draw_circle(c_world, tile_sz * 1.0, Color(0.9, 0.15, 0.2, 0.85))
+			map_viewport.draw_circle(c_world, tile_sz * 0.6, Color(1.0, 0.4, 0.2, 0.95))
+			map_viewport.draw_circle(c_world, tile_sz * 0.25, Color(1.0, 0.95, 0.5, 1.0))
+			
+			# Bastion Spikes / Turret Emplacements at 4 corners
+			for offset in [Vector2(-1.3, -1.3), Vector2(1.3, -1.3), Vector2(-1.3, 1.3), Vector2(1.3, 1.3)]:
+				var spike_pos = c_world + offset * tile_sz
+				map_viewport.draw_circle(spike_pos, 5.0 * map_zoom, Color(1.0, 0.3, 0.3))
+				map_viewport.draw_line(c_world, spike_pos, Color(1.0, 0.2, 0.2, 0.5), 1.5)
+				
+			map_viewport.draw_string(ThemeDB.fallback_font, c_world + Vector2(-48, -tile_sz * 1.6), "☠️ CYBER-BEHEMOTH", HORIZONTAL_ALIGNMENT_CENTER, -1, 13, UITheme.COLOR_WARNING_GOLD)
+			_draw_health_bar(c_world + Vector2(0, tile_sz * 1.7), c.hp, c.max_hp, 90.0 * map_zoom, true)
 		else:
-			map_viewport.draw_circle(c_world, tile_sz * 0.7, UITheme.COLOR_ACCENT_ORANGE)
-			map_viewport.draw_string(ThemeDB.fallback_font, c_world + Vector2(-20, -10), "OBÓZ", HORIZONTAL_ALIGNMENT_CENTER, -1, 14, UITheme.COLOR_TEXT_MUTED)
-			_draw_health_bar(c_world + Vector2(0, tile_sz * 0.9), c.hp, 800, 44.0 * map_zoom)
+			# Neutral Camp 2.0: 2x2 Fortified Bunker Outpost
+			var camp_rect = Rect2(c_world - Vector2(tile_sz * 0.9, tile_sz * 0.9), Vector2(tile_sz * 1.8, tile_sz * 1.8))
+			map_viewport.draw_rect(camp_rect, Color(0.18, 0.08, 0.02, 0.85), true)
+			map_viewport.draw_rect(camp_rect, UITheme.COLOR_ACCENT_ORANGE, false, 2.0)
+			
+			# Inner Bunker Core
+			map_viewport.draw_circle(c_world, tile_sz * 0.65, Color(0.9, 0.45, 0.1, 0.9))
+			map_viewport.draw_circle(c_world, tile_sz * 0.35, Color(1.0, 0.75, 0.2, 0.95))
+			
+			# Barbed Outpost corner nodes
+			for offset in [Vector2(-0.8, -0.8), Vector2(0.8, -0.8), Vector2(-0.8, 0.8), Vector2(0.8, 0.8)]:
+				var p_pos = c_world + offset * tile_sz
+				map_viewport.draw_circle(p_pos, 3.5 * map_zoom, Color(1.0, 0.6, 0.1))
+				
+			map_viewport.draw_string(ThemeDB.fallback_font, c_world + Vector2(-42, -tile_sz * 1.05), "⚔️ WROGI POSTERUNEK", HORIZONTAL_ALIGNMENT_CENTER, -1, 11, UITheme.COLOR_ACCENT_ORANGE)
+			_draw_health_bar(c_world + Vector2(0, tile_sz * 1.15), c.hp, c.max_hp, 60.0 * map_zoom, true)
 
 	# 4. Resource Deposits
 	for r in active_map.resources:
@@ -1356,14 +1510,18 @@ func _draw_hover_tooltip(grid_pos: Vector2i, tile_sz: float, origin: Vector2) ->
 		map_viewport.draw_string(ThemeDB.fallback_font, mouse_screen + Vector2(12, 46), "Pozostałe złoże: %d szt." % hovered_res.amount, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color.WHITE)
 		map_viewport.draw_string(ThemeDB.fallback_font, mouse_screen + Vector2(12, 66), req_b, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UITheme.COLOR_TEXT_MUTED)
 
-func _draw_health_bar(center_pos: Vector2, hp: int, max_hp: int, bar_width: float) -> void:
-	var bar_h = 5.0
+func _draw_health_bar(center_pos: Vector2, hp: int, max_hp: int, bar_width: float, show_text: bool = false) -> void:
+	var bar_h = 7.0 if show_text else 5.0
 	var bar_rect = Rect2(center_pos - Vector2(bar_width * 0.5, bar_h * 0.5), Vector2(bar_width, bar_h))
-	map_viewport.draw_rect(bar_rect, Color(0.1, 0.1, 0.1, 0.8), true)
+	map_viewport.draw_rect(bar_rect, Color(0.06, 0.08, 0.12, 0.9), true)
+	map_viewport.draw_rect(bar_rect, Color(0.2, 0.3, 0.4, 0.8), false, 1.0)
 	var pct = clampf(float(hp) / float(max_hp), 0.0, 1.0)
 	var fill_rect = Rect2(bar_rect.position, Vector2(bar_width * pct, bar_h))
 	var fill_col = UITheme.COLOR_SUCCESS_GREEN if pct > 0.4 else UITheme.COLOR_ACCENT_RED
 	map_viewport.draw_rect(fill_rect, fill_col, true)
+	if show_text and map_zoom >= 0.7:
+		var hp_str = "%d / %d" % [hp, max_hp]
+		map_viewport.draw_string(ThemeDB.fallback_font, center_pos + Vector2(-22, 13), hp_str, HORIZONTAL_ALIGNMENT_CENTER, -1, 10, Color(0.95, 0.95, 0.95, 0.95))
 
 # ==============================================================================
 # Mouse Interaction & Unit Control
@@ -1382,6 +1540,21 @@ func _on_map_gui_input(event: InputEvent) -> void:
 			if minimap_canvas: minimap_canvas.queue_redraw()
 		if is_box_selecting:
 			box_select_current = event.position
+			
+		# Check hover over active camps/boss
+		var hovered_camp: MapData.CampNode = null
+		if active_placing_def_id.is_empty() and not is_demolish_mode and not is_box_selecting and not is_dragging:
+			for c in active_map.camps:
+				if c.hp > 0:
+					var radius_tiles = 2.5 if c.type == MapData.CampType.BOSS else 1.2
+					if (Vector2(c.grid_pos) - Vector2(hover_grid_pos)).length() <= radius_tiles:
+						hovered_camp = c
+						break
+		if hovered_camp != null:
+			_show_camp_card(hovered_camp, event.position)
+		else:
+			_hide_camp_card()
+			
 		map_viewport.queue_redraw()
 		
 	elif event is InputEventMouseButton:
