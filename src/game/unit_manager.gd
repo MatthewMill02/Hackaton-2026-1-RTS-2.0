@@ -132,14 +132,28 @@ func update_units(delta: float, map_data: MapData, buildings: Array, economy: Ec
 		var speed_mult = research.unit_speed_mult if (research != null and u.slot == local_slot) else 1.0
 		
 		match u.state:
-			UnitState.IDLE:
-				pass
-				
-			UnitState.MOVING:
-				if u.world_pos.distance_to(u.target_pos) > 4.0:
-					u.world_pos = u.world_pos.move_toward(u.target_pos, u.speed * speed_mult * delta)
+			UnitState.IDLE, UnitState.MOVING:
+				if u.state == UnitState.MOVING:
+					if u.world_pos.distance_to(u.target_pos) > 4.0:
+						u.world_pos = u.world_pos.move_toward(u.target_pos, u.speed * speed_mult * delta)
+					else:
+						u.state = UnitState.IDLE
+						
+				# Check for direct overlap / contact with enemy units
+				if u.def_id == "emp_drone":
+					var contact_enemy = _find_nearest_enemy_unit(u, units, 36.0)
+					if contact_enemy != null:
+						_trigger_emp_blast(u, buildings, tile_px)
+						u.hp = 0
+						continue
 				else:
-					u.state = UnitState.IDLE
+					# Overlap / collision combat check (within attack range or physical overlap)
+					var nearby_enemy = _find_nearest_enemy_unit(u, units, maxf(u.attack_range, 32.0))
+					if nearby_enemy != null:
+						# If idle or overlapping close (collision), auto-engage in combat!
+						if u.state == UnitState.IDLE or u.world_pos.distance_to(nearby_enemy.world_pos) <= 24.0:
+							u.target_enemy_unit = nearby_enemy
+							u.state = UnitState.ATTACKING
 					
 			UnitState.MOVING_TO_RESOURCE:
 				if u.target_resource == null or u.target_resource.amount <= 0:
@@ -224,9 +238,14 @@ func update_units(delta: float, map_data: MapData, buildings: Array, economy: Ec
 							u.target_enemy_building.hp -= u.attack_damage
 				elif u.target_enemy_unit != null:
 					if u.target_enemy_unit.hp <= 0:
-						u.state = UnitState.IDLE
-						u.target_enemy_unit = null
-						continue
+						# Immediate chain to next overlapping/in-range enemy
+						var next_enemy = _find_nearest_enemy_unit(u, units, u.attack_range + 32.0)
+						if next_enemy != null:
+							u.target_enemy_unit = next_enemy
+						else:
+							u.state = UnitState.IDLE
+							u.target_enemy_unit = null
+							continue
 					var dist = u.world_pos.distance_to(u.target_enemy_unit.world_pos)
 					if dist > u.attack_range:
 						u.world_pos = u.world_pos.move_toward(u.target_enemy_unit.world_pos, u.speed * speed_mult * delta)
@@ -239,11 +258,22 @@ func update_units(delta: float, map_data: MapData, buildings: Array, economy: Ec
 						if u.attack_timer >= u.attack_cooldown:
 							u.attack_timer = 0.0
 							u.target_enemy_unit.hp -= u.attack_damage
+							
+							# Target auto-retaliates if idle or moving without current enemy
+							if u.target_enemy_unit.hp > 0 and u.target_enemy_unit.target_enemy_unit == null:
+								if u.target_enemy_unit.state == UnitState.IDLE or u.target_enemy_unit.state == UnitState.MOVING:
+									u.target_enemy_unit.target_enemy_unit = u
+									u.target_enemy_unit.state = UnitState.ATTACKING
+									
 							if u.target_enemy_unit.hp <= 0:
 								if local_slot < 0 or u.slot == local_slot:
 									_reward_unit_kill(economy)
-								u.state = UnitState.IDLE
-								u.target_enemy_unit = null
+								var next_target = _find_nearest_enemy_unit(u, units, u.attack_range + 32.0)
+								if next_target != null:
+									u.target_enemy_unit = next_target
+								else:
+									u.state = UnitState.IDLE
+									u.target_enemy_unit = null
 				else:
 					u.state = UnitState.IDLE
 
@@ -266,6 +296,17 @@ func update_units(delta: float, map_data: MapData, buildings: Array, economy: Ec
 					if u.target_building.build_progress >= 1.0:
 						u.state = UnitState.IDLE
 						u.target_building = null
+
+func _find_nearest_enemy_unit(u: UnitInstance, all_units: Array, max_dist: float) -> UnitInstance:
+	var closest: UnitInstance = null
+	var min_d = max_dist
+	for other in all_units:
+		if other != u and other.slot != u.slot and other.hp > 0:
+			var d = u.world_pos.distance_to(other.world_pos)
+			if d <= min_d:
+				min_d = d
+				closest = other
+	return closest
 
 func _reward_unit_kill(economy: EconomyManager) -> void:
 	if economy == null: return
