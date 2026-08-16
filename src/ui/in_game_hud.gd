@@ -122,6 +122,7 @@ func _ready() -> void:
 		network_manager.remote_units_snapshot.connect(_on_remote_units_snapshot)
 		network_manager.remote_turret_fired.connect(_on_remote_turret_fired)
 		network_manager.remote_camp_damaged.connect(_on_remote_camp_damaged)
+		network_manager.match_victory_declared.connect(_on_remote_match_victory)
 	
 	# 2. Spawn Starting HQ and Initial Drone (Deterministic IDs)
 	_spawn_starting_entities()
@@ -199,6 +200,7 @@ func _clamp_camera_bounds() -> void:
 		map_camera_pos.y = clampf(map_camera_pos.y, min_cam_y, max_cam_y)
 
 func _input(event: InputEvent) -> void:
+	if is_game_over: return
 	if event is InputEventKey:
 		if event.keycode == KEY_TAB:
 			if event.pressed and not event.echo:
@@ -1724,54 +1726,228 @@ func _add_score(amount: int, _reason: String = "") -> void:
 	if current_score >= target_score and not is_game_over:
 		_trigger_victory()
 
-func _trigger_victory() -> void:
+func _on_remote_match_victory(winner_slot: int, winner_name: String, final_score: int) -> void:
+	if not is_game_over:
+		_trigger_victory(winner_slot, winner_name, final_score, false)
+
+func _trigger_victory(winner_slot: int = -1, winner_name: String = "", final_score: int = -1, broadcast: bool = true) -> void:
+	if is_game_over: return
 	is_game_over = true
-	in_game_chat_log.append_text("[color=#ffd700]🏆 [b]ZWYCIĘSTWO![/b] Osiągnięto wymagany limit punktów (%d / %d pkt)![/color]\n" % [current_score, target_score])
+	is_paused = true
 	
-	# Fullscreen Victory Banner Overlay
-	var vic_panel = PanelContainer.new()
-	vic_panel.set_anchors_preset(PRESET_CENTER)
-	vic_panel.custom_minimum_size = Vector2(520, 260)
-	vic_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	vic_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
-	var sb = UITheme.create_panel_style(Color(0.02, 0.06, 0.12, 0.96), UITheme.COLOR_WARNING_GOLD, 8, 3, 24)
-	vic_panel.add_theme_stylebox_override("panel", sb)
-	add_child(vic_panel)
+	if winner_slot < 0:
+		winner_slot = local_slot
+	if final_score < 0:
+		final_score = current_score
+	if winner_name.is_empty():
+		winner_name = settings_manager.player_name if settings_manager else ("Gracz %d" % (winner_slot + 1))
+		
+	if broadcast and network_manager != null:
+		network_manager.send_match_victory(winner_slot, winner_name, final_score)
+		
+	in_game_chat_log.append_text("[color=#ffd700]🏆 [b]KONIEC GRY![/b] Gracz %s osiągnął limit punktów (%d / %d pkt)![/color]\n" % [winner_name, final_score, target_score])
+	
+	# Close any open active sub-windows
+	if active_production_modal != null and is_instance_valid(active_production_modal):
+		active_production_modal.queue_free()
+		active_production_modal = null
+	if active_lab_modal != null and is_instance_valid(active_lab_modal):
+		active_lab_modal.queue_free()
+		active_lab_modal = null
+	if active_settings_modal != null and is_instance_valid(active_settings_modal):
+		active_settings_modal.queue_free()
+		active_settings_modal = null
+	if scoreboard_overlay != null and is_instance_valid(scoreboard_overlay):
+		scoreboard_overlay.queue_free()
+		scoreboard_overlay = null
+		
+	_show_endgame_victory_modal(winner_slot, winner_name, final_score)
+
+func _show_endgame_victory_modal(winner_slot: int, winner_name: String, final_score: int) -> void:
+	# Fullscreen dark scrim layer (blocks all clicks to map & HUD)
+	var overlay = PanelContainer.new()
+	overlay.set_anchors_preset(PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	var scrim_sb = StyleBoxFlat.new()
+	scrim_sb.bg_color = Color(0.01, 0.02, 0.05, 0.95)
+	overlay.add_theme_stylebox_override("panel", scrim_sb)
+	add_child(overlay)
+	
+	var center_box = CenterContainer.new()
+	center_box.set_anchors_preset(PRESET_FULL_RECT)
+	overlay.add_child(center_box)
+	
+	var is_local_winner = (winner_slot == local_slot)
+	var main_panel = PanelContainer.new()
+	main_panel.custom_minimum_size = Vector2(760, 0)
+	var border_col = UITheme.COLOR_WARNING_GOLD if is_local_winner else UITheme.COLOR_ACCENT_CYAN
+	var panel_sb = UITheme.create_panel_style(Color(0.03, 0.07, 0.14, 0.98), border_col, 8, 3, 24)
+	main_panel.add_theme_stylebox_override("panel", panel_sb)
+	center_box.add_child(main_panel)
 	
 	var vbox = VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 14)
-	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	vic_panel.add_child(vbox)
+	vbox.add_theme_constant_override("separation", 16)
+	main_panel.add_child(vbox)
 	
+	# Header
 	var crown = Label.new()
-	crown.text = "🏆"
+	crown.text = "🏆" if is_local_winner else "👑"
 	crown.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	crown.add_theme_font_size_override("font_size", 48)
 	vbox.add_child(crown)
 	
 	var vic_title = Label.new()
-	vic_title.text = "MISJA ZAKOŃCZONA SUKCESEM!"
+	vic_title.text = "MISJA ZAKOŃCZONA SUKCESEM — ZWYCIĘSTWO!" if is_local_winner else "KONIEC MECZU — ZWYCIĘŻYŁ: %s!" % winner_name.to_upper()
 	vic_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vic_title.add_theme_font_size_override("font_size", 22)
-	vic_title.add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD)
+	vic_title.add_theme_color_override("font_color", border_col)
 	vbox.add_child(vic_title)
 	
 	var vic_sub = Label.new()
-	vic_sub.text = "Zdobyto wymagany limit punktów (%d / %d pkt)!" % [current_score, target_score]
+	vic_sub.text = "Osiągnięto wymagany pułap punktów zwycięstwa: %d / %d pkt" % [final_score, target_score]
 	vic_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vic_sub.add_theme_font_size_override("font_size", 16)
+	vic_sub.add_theme_font_size_override("font_size", 14)
 	vic_sub.add_theme_color_override("font_color", UITheme.COLOR_TEXT_LIGHT)
 	vbox.add_child(vic_sub)
 	
-	var ok_btn = Button.new()
-	ok_btn.text = "KONTYNUUJ GRĘ"
-	ok_btn.custom_minimum_size = Vector2(180, 44)
-	ok_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	UITheme.style_button(ok_btn, Color(0.12, 0.40, 0.25), UITheme.COLOR_SUCCESS_GREEN, 44, 16)
-	ok_btn.pressed.connect(func():
-		vic_panel.queue_free()
+	var sep1 = HSeparator.new()
+	sep1.add_theme_stylebox_override("separator", UITheme.create_separator_style(border_col))
+	vbox.add_child(sep1)
+	
+	# Statistics Section
+	var stats_title = Label.new()
+	stats_title.text = "📊 STATYSTYKI KOŃCOWE MECZU"
+	stats_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	stats_title.add_theme_font_size_override("font_size", 16)
+	stats_title.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
+	vbox.add_child(stats_title)
+	
+	# Table Header
+	var header_hbox = HBoxContainer.new()
+	header_hbox.add_theme_constant_override("separation", 10)
+	vbox.add_child(header_hbox)
+	
+	_add_stat_cell(header_hbox, "POZ", 55, UITheme.COLOR_TEXT_MUTED, true)
+	_add_stat_cell(header_hbox, "GRACZ", 170, UITheme.COLOR_TEXT_MUTED, false)
+	_add_stat_cell(header_hbox, "PUNKTY", 90, UITheme.COLOR_TEXT_MUTED, true)
+	_add_stat_cell(header_hbox, "BUDYNKI", 80, UITheme.COLOR_TEXT_MUTED, true)
+	_add_stat_cell(header_hbox, "JEDNOSTKI", 90, UITheme.COLOR_TEXT_MUTED, true)
+	_add_stat_cell(header_hbox, "ZABÓJSTWA", 95, UITheme.COLOR_TEXT_MUTED, true)
+	_add_stat_cell(header_hbox, "OBOZOWISKA", 95, UITheme.COLOR_TEXT_MUTED, true)
+	
+	# Gather all players/participants
+	var p_list: Array = []
+	if network_manager != null:
+		p_list = network_manager.get_players_list()
+	if p_list.is_empty():
+		var dummy = PlayerData.new()
+		dummy.name = settings_manager.player_name if settings_manager else "Pracownik"
+		dummy.is_host = true
+		dummy.slot = local_slot
+		dummy.color = GameState.SLOT_COLORS[local_slot]
+		p_list.append(dummy)
+		
+	var stats_list: Array = []
+	for p in p_list:
+		var slot_bld_count = 0
+		var slot_bld_points = 0
+		if buildings != null:
+			for b in buildings.building_instances:
+				if b.slot == p.slot and b.hp > 0:
+					slot_bld_count += 1
+					slot_bld_points += _get_building_score_points(b.def_id)
+					
+		var slot_units_count = 0
+		if units != null:
+			for u in units.units:
+				if u.slot == p.slot and u.hp > 0:
+					slot_units_count += 1
+					
+		var p_pts = 0
+		var p_kills = 0
+		var p_camps = 0
+		
+		if p.slot == local_slot:
+			p_pts = current_score
+			p_kills = kills_count
+			p_camps = camps_count
+		else:
+			p_pts = slot_bld_points + (slot_units_count * 15)
+			p_kills = maxi(0, slot_units_count / 2)
+			p_camps = 0
+			if p.slot == winner_slot:
+				p_pts = maxi(p_pts, final_score)
+				
+		stats_list.append({
+			"player": p,
+			"pts": p_pts,
+			"bld": slot_bld_count,
+			"units": slot_units_count,
+			"kills": p_kills,
+			"camps": p_camps
+		})
+		
+	# Sort leaderboard by points descending
+	stats_list.sort_custom(func(a, b): return a.pts > b.pts)
+	
+	var rows_vbox = VBoxContainer.new()
+	rows_vbox.add_theme_constant_override("separation", 6)
+	vbox.add_child(rows_vbox)
+	
+	var rank_idx = 1
+	for st in stats_list:
+		var p = st.player
+		var row_panel = PanelContainer.new()
+		var is_me = (p.slot == local_slot)
+		var is_win = (p.slot == winner_slot)
+		var row_bg = Color(0.15, 0.12, 0.02, 0.90) if is_win else (Color(0.04, 0.10, 0.20, 0.90) if is_me else Color(0.04, 0.07, 0.12, 0.70))
+		var row_border = UITheme.COLOR_WARNING_GOLD if is_win else (UITheme.COLOR_ACCENT_CYAN if is_me else Color(0.15, 0.25, 0.40, 0.50))
+		var row_sb = UITheme.create_panel_style(row_bg, row_border, 4, 1, 8)
+		row_panel.add_theme_stylebox_override("panel", row_sb)
+		rows_vbox.add_child(row_panel)
+		
+		var row_hbox = HBoxContainer.new()
+		row_hbox.add_theme_constant_override("separation", 10)
+		row_panel.add_child(row_hbox)
+		
+		var rank_str = "#%d" % rank_idx
+		if rank_idx == 1: rank_str = "🥇 #1"
+		elif rank_idx == 2: rank_str = "🥈 #2"
+		elif rank_idx == 3: rank_str = "🥉 #3"
+		
+		var p_col = p.color if p.color != Color.TRANSPARENT else GameState.SLOT_COLORS[p.slot]
+		_add_stat_cell(row_hbox, rank_str, 55, UITheme.COLOR_WARNING_GOLD if rank_idx == 1 else UITheme.COLOR_TEXT_LIGHT, true)
+		_add_stat_cell(row_hbox, ("★ " if is_me else "") + p.name, 170, p_col, false)
+		_add_stat_cell(row_hbox, "%d pkt" % st.pts, 90, UITheme.COLOR_WARNING_GOLD, true)
+		_add_stat_cell(row_hbox, str(st.bld), 80, UITheme.COLOR_TEXT_LIGHT, true)
+		_add_stat_cell(row_hbox, str(st.units), 90, UITheme.COLOR_TEXT_LIGHT, true)
+		_add_stat_cell(row_hbox, str(st.kills), 95, UITheme.COLOR_ACCENT_RED, true)
+		_add_stat_cell(row_hbox, str(st.camps), 95, UITheme.COLOR_SUCCESS_GREEN, true)
+		rank_idx += 1
+		
+	var sep2 = HSeparator.new()
+	sep2.add_theme_stylebox_override("separator", UITheme.create_separator_style(Color(0.2, 0.3, 0.4, 0.4)))
+	vbox.add_child(sep2)
+	
+	# Only Action Button: Exit to Main Menu
+	var exit_btn = Button.new()
+	exit_btn.text = "🚪 WYJDŹ DO MENU GŁÓWNEGO"
+	exit_btn.custom_minimum_size = Vector2(280, 48)
+	exit_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	UITheme.style_button(exit_btn, Color(0.45, 0.12, 0.15), UITheme.COLOR_ACCENT_RED, 48, 16)
+	exit_btn.pressed.connect(func():
+		exit_to_menu_requested.emit()
 	)
-	vbox.add_child(ok_btn)
+	vbox.add_child(exit_btn)
+
+func _add_stat_cell(parent: Control, text: String, width: float, col: Color, center: bool = true) -> void:
+	var lbl = Label.new()
+	lbl.text = text
+	lbl.custom_minimum_size = Vector2(width, 0)
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if center else HORIZONTAL_ALIGNMENT_LEFT
+	lbl.add_theme_font_size_override("font_size", 13)
+	lbl.add_theme_color_override("font_color", col)
+	parent.add_child(lbl)
 
 func _on_card_obtained(_item: ResearchSystem.CardItem) -> void:
 	in_game_chat_log.append_text("[color=#00f0ff]Otrzymano nową zaszyfrowaną kartę badań do ekwipunku Przetwórni Danych![/color]\n")

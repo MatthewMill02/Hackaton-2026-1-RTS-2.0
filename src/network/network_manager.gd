@@ -24,6 +24,7 @@ signal remote_turret_fired(from_pos: Vector2, to_pos: Vector2, is_wall_turret: b
 signal remote_camp_damaged(camp_grid_pos: Vector2i, damage: int, killer_slot: int)
 signal match_settings_synced(creative: bool, points: int, duration_min: int)
 signal match_countdown_updated(seconds_left: int)
+signal match_victory_declared(winner_slot: int, winner_name: String, final_score: int)
 
 var peer: ENetMultiplayerPeer = null
 var discovery: LobbyDiscovery = null
@@ -603,6 +604,16 @@ func send_camp_damage(camp_grid_pos: Vector2i, damage: int, killer_slot: int) ->
 @rpc("any_peer", "reliable")
 func sync_camp_damage(camp_grid_pos: Vector2i, damage: int, killer_slot: int) -> void:
 	remote_camp_damaged.emit(camp_grid_pos, damage, killer_slot)
+
+func send_match_victory(winner_slot: int, winner_name: String, final_score: int) -> void:
+	if multiplayer.multiplayer_peer != null:
+		rpc("sync_match_victory", winner_slot, winner_name, final_score)
+	else:
+		match_victory_declared.emit(winner_slot, winner_name, final_score)
+
+@rpc("any_peer", "call_local", "reliable")
+func sync_match_victory(winner_slot: int, winner_name: String, final_score: int) -> void:
+	match_victory_declared.emit(winner_slot, winner_name, final_score)
 
 # ==============================================================================
 # Helper Methods
