@@ -422,12 +422,18 @@ func _reward_unit_kill(economy: EconomyManager) -> void:
 
 func _trigger_emp_blast(u: UnitInstance, buildings: Array, tile_px: float) -> void:
 	var blast_center = u.world_pos
-	var blast_radius = 2.5 * tile_px # 2 tiles radius
+	var blast_radius = 3.5 * tile_px
 	for b in buildings:
 		if b.slot != u.slot and b.hp > 0:
 			var b_center = Vector2((b.grid_pos.x + b.size.x * 0.5) * tile_px, (b.grid_pos.y + b.size.y * 0.5) * tile_px)
-			if blast_center.distance_to(b_center) <= blast_radius + b.size.x * tile_px * 0.5:
-				b.hp = maxi(1, b.hp - 40)
+			var b_half_w = b.size.x * tile_px * 0.5
+			var b_half_h = b.size.y * tile_px * 0.5
+			var closest_x = clampf(blast_center.x, b_center.x - b_half_w, b_center.x + b_half_w)
+			var closest_y = clampf(blast_center.y, b_center.y - b_half_h, b_center.y + b_half_h)
+			var closest_point = Vector2(closest_x, closest_y)
+			
+			if blast_center.distance_to(closest_point) <= blast_radius:
+				b.hp = maxi(1, b.hp - 50)
 				b.emp_overload_timer = 15.0 # 15s power overload!
 				b.is_powered = false
 

@@ -112,7 +112,7 @@ func update_grid(delta: float, buildings: Array, local_slot: int = -1, research:
 	var active_mines: Array = []
 	
 	for b in buildings:
-		if b.build_progress < 1.0 or b.hp <= 0:
+		if b.build_progress < 1.0 or b.hp <= 0 or b.emp_overload_timer > 0.0:
 			continue
 		if local_slot >= 0 and b.slot != local_slot:
 			continue

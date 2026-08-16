@@ -36,7 +36,7 @@ func update_combat(
 	const TURRET_COOLDOWN_SEC: float = 0.25
 	
 	for b in buildings:
-		if b.hp <= 0 or b.build_progress < 1.0:
+		if b.hp <= 0 or b.build_progress < 1.0 or b.emp_overload_timer > 0.0:
 			continue
 		if local_slot >= 0 and b.slot != local_slot:
 			continue
