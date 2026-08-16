@@ -1352,16 +1352,24 @@ func _on_map_gui_input(event: InputEvent) -> void:
 		elif event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
 				if not active_placing_def_id.is_empty():
-					# Attempt building placement (keeps tool active for continuous building)
-					var placed = buildings.place_building(active_placing_def_id, hover_grid_pos, local_slot, active_map, economy)
-					if placed != null:
-						var pts = _get_building_score_points(placed.def_id)
-						_add_score(pts, "Postawiono: %s (+%d pkt)" % [placed.name, pts])
-						in_game_chat_log.append_text("[color=#00f0ff]Postawiono: [b]%s[/b] (+%d pkt do zwycięstwa)[/color]\n" % [placed.name, pts])
-						if network_manager != null:
-							network_manager.send_place_building(placed.def_id, hover_grid_pos, local_slot, placed.instance_id)
-						map_viewport.queue_redraw()
-						if minimap_canvas: minimap_canvas.queue_redraw()
+					var def = buildings.get_def(active_placing_def_id)
+					if def != null and not economy.can_afford(def.cost):
+						_show_floating_mouse_alert("⚠️ ZA DROGO!", event.position, UITheme.COLOR_ACCENT_RED)
+						in_game_chat_log.append_text("[color=#ff4655]⚠️ Za drogo! Brakuje surowców na postawienie tego budynku![/color]\n")
+					else:
+						var validation = buildings.is_position_valid_for_building(active_placing_def_id, hover_grid_pos, local_slot, active_map)
+						if not validation.valid:
+							_show_floating_mouse_alert("⚠️ " + validation.reason, event.position, UITheme.COLOR_ACCENT_ORANGE)
+						else:
+							var placed = buildings.place_building(active_placing_def_id, hover_grid_pos, local_slot, active_map, economy)
+							if placed != null:
+								var pts = _get_building_score_points(placed.def_id)
+								_add_score(pts, "Postawiono: %s (+%d pkt)" % [placed.name, pts])
+								in_game_chat_log.append_text("[color=#00f0ff]Postawiono: [b]%s[/b] (+%d pkt do zwycięstwa)[/color]\n" % [placed.name, pts])
+								if network_manager != null:
+									network_manager.send_place_building(placed.def_id, hover_grid_pos, local_slot, placed.instance_id)
+								map_viewport.queue_redraw()
+								if minimap_canvas: minimap_canvas.queue_redraw()
 				elif is_demolish_mode:
 					# Attempt demolition (continuous mode: stays active until right-click/ESC)
 					if buildings.demolish_building_at(hover_grid_pos, local_slot, economy):
@@ -1529,7 +1537,32 @@ func _on_build_selected(def_id: String) -> void:
 		is_demolish_mode = false
 		var def = buildings.get_def(def_id)
 		if def != null:
-			in_game_chat_log.append_text("[color=#00f0ff]Tryb budowy: [b]%s[/b] (Klikaj, aby stawiać; PPM lub ESC anuluje)[/color]\n" % def.name)
+			if not economy.can_afford(def.cost):
+				_show_floating_mouse_alert("⚠️ ZA DROGO!", get_global_mouse_position(), UITheme.COLOR_ACCENT_RED)
+				in_game_chat_log.append_text("[color=#ff4655]⚠️ Za drogo! Brakuje surowców na budowę: [b]%s[/b][/color]\n" % def.name)
+			else:
+				in_game_chat_log.append_text("[color=#00f0ff]Tryb budowy: [b]%s[/b] (Klikaj, aby stawiać; PPM lub ESC anuluje)[/color]\n" % def.name)
+
+func _show_floating_mouse_alert(text: String, screen_pos: Vector2, color: Color = Color(1.0, 0.25, 0.25)) -> void:
+	var alert_panel = PanelContainer.new()
+	alert_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sb = UITheme.create_panel_style(Color(0.18, 0.04, 0.06, 0.96), color, 4, 1, 6)
+	alert_panel.add_theme_stylebox_override("panel", sb)
+	alert_panel.global_position = screen_pos + Vector2(16, -24)
+	add_child(alert_panel)
+	
+	var lbl = Label.new()
+	lbl.text = text
+	lbl.add_theme_font_size_override("font_size", 13)
+	lbl.add_theme_color_override("font_color", color)
+	alert_panel.add_child(lbl)
+	
+	# Animate float up and fade out
+	var tw = create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(alert_panel, "global_position:y", alert_panel.global_position.y - 35.0, 1.2).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(alert_panel, "modulate:a", 0.0, 1.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tw.chain().tween_callback(alert_panel.queue_free)
 
 func _update_timer_display() -> void:
 	var total_sec = int(match_timer_seconds)
