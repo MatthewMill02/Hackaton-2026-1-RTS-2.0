@@ -2146,12 +2146,12 @@ func _on_card_sold(_item: ResearchSystem.CardItem) -> void:
 	_update_resource_labels()
 
 func _on_unit_trained(def_id: String, building: BuildingSystem.BuildingInstance) -> void:
-	var spawn_pos = Vector2((building.grid_pos.x + building.size.x + 0.5) * TILE_PX, (building.grid_pos.y + 0.5) * TILE_PX)
-	var u = units.spawn_unit(def_id, building.slot, spawn_pos)
+	var raw_spawn_pos = Vector2((building.grid_pos.x + building.size.x + 0.5) * TILE_PX, (building.grid_pos.y + 0.5) * TILE_PX)
+	var u = units.spawn_unit(def_id, building.slot, raw_spawn_pos)
 	if u != null:
 		in_game_chat_log.append_text("[color=#00f0ff]Wyprodukowano: [b]%s[/b][/color]\n" % u.name)
 		if network_manager != null:
-			network_manager.send_unit_spawn(def_id, building.slot, u.instance_id, spawn_pos)
+			network_manager.send_unit_spawn(def_id, building.slot, u.instance_id, u.world_pos)
 		map_viewport.queue_redraw()
 		_update_resource_labels()
 

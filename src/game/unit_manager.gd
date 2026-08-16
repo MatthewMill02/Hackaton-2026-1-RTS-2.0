@@ -18,6 +18,7 @@ class UnitDef:
 	var cost: Dictionary
 	var unit_type: String
 	var sprite_prefix: String
+	var collision_radius: float = 12.0
 
 class UnitInstance:
 	var instance_id: int
@@ -34,6 +35,7 @@ class UnitInstance:
 	var attack_cooldown: float
 	var attack_timer: float = 0.0
 	var selected: bool = false
+	var collision_radius: float = 12.0
 	
 	# State & Gathering / Construction / Combat
 	var state: UnitState = UnitState.IDLE
@@ -57,15 +59,16 @@ func _init() -> void:
 	_register_definitions()
 
 func _register_definitions() -> void:
-	_add_def("worker_drone", "Dron Konstrukcyjny", 100, 140.0, 5, 32.0, 1.0, 0, {"iron": 30, "oil": 10}, "WORKER", "unit_worker")
-	_add_def("scout_bot", "Scoutbot", 120, 180.0, 15, 96.0, 0.8, 0, {"iron": 50, "oil": 20}, "SCOUT", "unit_scout")
-	_add_def("terminus_bot", "Terminus", 1500, 70.0, 80, 80.0, 1.8, 0, {"iron": 300, "oil": 150, "redstone": 50}, "SUPER", "unit_behemoth")
-	_add_def("emp_drone", "Dron EMP", 180, 160.0, 30, 48.0, 1.0, 0, {"iron": 90, "oil": 40, "redstone": 15}, "EMP", "unit_emp")
+	_add_def("worker_drone", "Dron Konstrukcyjny", 100, 140.0, 5, 32.0, 1.0, 0, {"iron": 30, "oil": 10}, "WORKER", "unit_worker", 12.0)
+	_add_def("scout_bot", "Scoutbot", 120, 180.0, 15, 96.0, 0.8, 0, {"iron": 50, "oil": 20}, "SCOUT", "unit_scout", 14.0)
+	_add_def("terminus_bot", "Terminus", 1500, 70.0, 80, 80.0, 1.8, 0, {"iron": 300, "oil": 150, "redstone": 50}, "SUPER", "unit_behemoth", 24.0)
+	_add_def("emp_drone", "Dron EMP", 180, 160.0, 30, 48.0, 1.0, 0, {"iron": 90, "oil": 40, "redstone": 15}, "EMP", "unit_emp", 13.0)
 
 func _add_def(
 	p_id: String, p_name: String, p_hp: int, p_speed: float,
 	p_dmg: int, p_range: float, p_cd: float, p_gather: int,
-	p_cost: Dictionary, p_type: String, p_prefix: String
+	p_cost: Dictionary, p_type: String, p_prefix: String,
+	p_collision_radius: float = 12.0
 ) -> void:
 	var d = UnitDef.new()
 	d.id = p_id
@@ -79,6 +82,7 @@ func _add_def(
 	d.cost = p_cost
 	d.unit_type = p_type
 	d.sprite_prefix = p_prefix
+	d.collision_radius = p_collision_radius
 	definitions[p_id] = d
 	
 	# Cache player slot variations (p0..p3)
@@ -89,10 +93,41 @@ func _add_def(
 		if tex != null:
 			textures_cache[key] = tex
 
+func find_free_spawn_position(base_pos: Vector2, required_radius: float = 14.0) -> Vector2:
+	var is_occupied = false
+	for u in units:
+		if u.hp > 0 and u.world_pos.distance_to(base_pos) < (u.collision_radius + required_radius):
+			is_occupied = true
+			break
+			
+	if not is_occupied:
+		return base_pos
+		
+	# Spiral search for nearest unoccupied spot
+	for ring in range(1, 8):
+		var ring_dist = ring * (required_radius * 2.2)
+		var sample_count = ring * 8
+		for i in range(sample_count):
+			var angle = (float(i) / float(sample_count)) * TAU
+			var cand = base_pos + Vector2(cos(angle), sin(angle)) * ring_dist
+			var cand_clear = true
+			for u in units:
+				if u.hp > 0 and u.world_pos.distance_to(cand) < (u.collision_radius + required_radius):
+					cand_clear = false
+					break
+			if cand_clear:
+				return cand
+				
+	return base_pos + Vector2(randf_range(-16.0, 16.0), randf_range(-16.0, 16.0))
+
 func spawn_unit(def_id: String, slot: int, spawn_pos: Vector2, override_id: int = -1) -> UnitInstance:
 	var def = definitions.get(def_id, null)
 	if def == null: return null
 	
+	var effective_pos = spawn_pos
+	if override_id <= 0:
+		effective_pos = find_free_spawn_position(spawn_pos, def.collision_radius)
+		
 	var u = UnitInstance.new()
 	if override_id > 0:
 		u.instance_id = override_id
@@ -104,14 +139,15 @@ func spawn_unit(def_id: String, slot: int, spawn_pos: Vector2, override_id: int 
 	u.def_id = def.id
 	u.name = def.name
 	u.slot = slot
-	u.world_pos = spawn_pos
-	u.target_pos = spawn_pos
+	u.world_pos = effective_pos
+	u.target_pos = effective_pos
 	u.hp = def.max_hp
 	u.max_hp = def.max_hp
 	u.speed = def.speed
 	u.attack_damage = def.attack_damage
 	u.attack_range = def.attack_range
 	u.attack_cooldown = def.attack_cooldown
+	u.collision_radius = def.collision_radius
 	
 	var tex_key = "%s_p%d" % [def_id, slot]
 	u.sprite_texture = textures_cache.get(tex_key, null)
@@ -296,6 +332,50 @@ func update_units(delta: float, map_data: MapData, buildings: Array, economy: Ec
 					if u.target_building.build_progress >= 1.0:
 						u.state = UnitState.IDLE
 						u.target_building = null
+						
+	# Unit-to-unit Collision & Hitbox Separation Loop
+	_resolve_unit_collisions(delta, map_data, tile_px)
+
+func _resolve_unit_collisions(delta: float, _map_data: MapData, tile_px: float) -> void:
+	var active_units: Array = []
+	for u in units:
+		if u.hp > 0:
+			active_units.append(u)
+			
+	var count = active_units.size()
+	if count < 2: return
+	
+	# Push overlapping units apart smoothly
+	for i in range(count):
+		var u1: UnitInstance = active_units[i]
+		for j in range(i + 1, count):
+			var u2: UnitInstance = active_units[j]
+			var min_dist = u1.collision_radius + u2.collision_radius
+			var diff = u1.world_pos - u2.world_pos
+			var dist = diff.length()
+			
+			if dist < min_dist:
+				var overlap = min_dist - dist
+				var push_dir: Vector2
+				if dist < 0.001:
+					var angle = float(u1.instance_id % 360) * (PI / 180.0)
+					push_dir = Vector2(cos(angle), sin(angle))
+				else:
+					push_dir = diff / dist
+					
+				var push_amount = overlap * 0.5 * minf(1.0, delta * 15.0)
+				u1.world_pos += push_dir * push_amount
+				u2.world_pos -= push_dir * push_amount
+				
+	# Keep units safely within playable map bounds
+	if _map_data != null:
+		var min_x = tile_px * 1.5
+		var min_y = tile_px * 1.5
+		var max_x = (_map_data.width - 1.5) * tile_px
+		var max_y = (_map_data.height - 1.5) * tile_px
+		for u in active_units:
+			u.world_pos.x = clampf(u.world_pos.x, min_x, max_x)
+			u.world_pos.y = clampf(u.world_pos.y, min_y, max_y)
 
 func _find_nearest_enemy_unit(u: UnitInstance, all_units: Array, max_dist: float) -> UnitInstance:
 	var closest: UnitInstance = null
