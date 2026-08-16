@@ -60,18 +60,16 @@ static func generate_map(seed_val: int = 0) -> MapData:
 		var center_vec = Vector2(center.x, center.y)
 		var to_center_dir = (center_vec - base_center).normalized()
 		
-		# A) Near Base (Max 5 tiles from base center, outside HQ)
+		# A) Near Base (Guaranteed 2+ Stone & 2+ Iron deposits for starter mines)
 		# Stone
-		if rng.randf() <= ResourceConfig.BASE_STONE_SPAWN_RATE:
-			var stone_count = rng.randi_range(ResourceConfig.BASE_STONE_MIN_COUNT, ResourceConfig.BASE_STONE_MAX_COUNT)
-			for _s in range(stone_count):
-				_place_resource_cluster(map, rng, occupied, MapData.ResourceType.STONE, Vector2i(int(base_center.x), int(base_center.y)), ResourceConfig.BASE_NEAR_MIN_DIST, ResourceConfig.BASE_NEAR_MAX_DIST, ResourceConfig.BASE_STONE_AMOUNT)
+		var stone_count = maxi(2, rng.randi_range(ResourceConfig.BASE_STONE_MIN_COUNT, ResourceConfig.BASE_STONE_MAX_COUNT))
+		for _s in range(stone_count):
+			_place_resource_cluster(map, rng, occupied, MapData.ResourceType.STONE, Vector2i(int(base_center.x), int(base_center.y)), ResourceConfig.BASE_NEAR_MIN_DIST, ResourceConfig.BASE_NEAR_MAX_DIST, ResourceConfig.BASE_STONE_AMOUNT)
 		
 		# Iron
-		if rng.randf() <= ResourceConfig.BASE_IRON_SPAWN_RATE:
-			var iron_count = rng.randi_range(ResourceConfig.BASE_IRON_MIN_COUNT, ResourceConfig.BASE_IRON_MAX_COUNT)
-			for _i in range(iron_count):
-				_place_resource_cluster(map, rng, occupied, MapData.ResourceType.IRON, Vector2i(int(base_center.x), int(base_center.y)), ResourceConfig.BASE_NEAR_MIN_DIST, ResourceConfig.BASE_NEAR_MAX_DIST, ResourceConfig.BASE_IRON_AMOUNT)
+		var iron_count = maxi(2, rng.randi_range(ResourceConfig.BASE_IRON_MIN_COUNT, ResourceConfig.BASE_IRON_MAX_COUNT))
+		for _i in range(iron_count):
+			_place_resource_cluster(map, rng, occupied, MapData.ResourceType.IRON, Vector2i(int(base_center.x), int(base_center.y)), ResourceConfig.BASE_NEAR_MIN_DIST, ResourceConfig.BASE_NEAR_MAX_DIST, ResourceConfig.BASE_IRON_AMOUNT)
 			
 		# B) Mid-range towards center (Redstone & Oil)
 		# Redstone

@@ -132,11 +132,39 @@ func _ready() -> void:
 
 func _spawn_starting_entities() -> void:
 	for b_spawn in active_map.bases:
-		# Spawn HQ on grid with deterministic ID
-		var hq_id = b_spawn.slot * 10000 + 1
-		var hq_inst = buildings.place_building("hq", b_spawn.grid_pos, b_spawn.slot, active_map, economy, true, hq_id)
+		var base_center = Vector2(b_spawn.grid_pos.x + 1.0, b_spawn.grid_pos.y + 1.0)
 		
-		# Spawn starting Worker Drone next to HQ with deterministic ID
+		# 1. Spawn Starting HQ on grid with deterministic ID
+		var hq_id = b_spawn.slot * 10000 + 1
+		var _hq_inst = buildings.place_building("hq", b_spawn.grid_pos, b_spawn.slot, active_map, economy, true, hq_id)
+		
+		# 2. Spawn 2 Free Starting Stone Mines and 2 Free Iron Mines on near resource deposits
+		var base_stone_nodes: Array = []
+		var base_iron_nodes: Array = []
+		for r in active_map.resources:
+			var d = base_center.distance_to(Vector2(r.grid_pos.x, r.grid_pos.y))
+			if d <= 8.0:
+				if r.type == MapData.ResourceType.STONE:
+					base_stone_nodes.append(r)
+				elif r.type == MapData.ResourceType.IRON:
+					base_iron_nodes.append(r)
+					
+		base_stone_nodes.sort_custom(func(a, b): return base_center.distance_to(Vector2(a.grid_pos.x, a.grid_pos.y)) < base_center.distance_to(Vector2(b.grid_pos.x, b.grid_pos.y)))
+		base_iron_nodes.sort_custom(func(a, b): return base_center.distance_to(Vector2(a.grid_pos.x, a.grid_pos.y)) < base_center.distance_to(Vector2(b.grid_pos.x, b.grid_pos.y)))
+		
+		# Place 2 starter Stone Mines
+		for s_idx in range(mini(2, base_stone_nodes.size())):
+			var s_node = base_stone_nodes[s_idx]
+			var s_id = b_spawn.slot * 10000 + 10 + s_idx
+			buildings.place_building("stone_mine", s_node.grid_pos, b_spawn.slot, active_map, economy, true, s_id)
+			
+		# Place 2 starter Iron Mines
+		for i_idx in range(mini(2, base_iron_nodes.size())):
+			var i_node = base_iron_nodes[i_idx]
+			var i_id = b_spawn.slot * 10000 + 20 + i_idx
+			buildings.place_building("iron_mine", i_node.grid_pos, b_spawn.slot, active_map, economy, true, i_id)
+		
+		# 3. Spawn starting Worker Drone next to HQ with deterministic ID
 		var spawn_pos = Vector2((b_spawn.grid_pos.x + 2.0) * TILE_PX, (b_spawn.grid_pos.y + 2.0) * TILE_PX)
 		var drone_id = b_spawn.slot * 10000 + 1
 		var drone = units.spawn_unit("worker_drone", b_spawn.slot, spawn_pos, drone_id)

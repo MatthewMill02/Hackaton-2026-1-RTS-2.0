@@ -295,8 +295,8 @@ func place_building(
 	inst.storage_bonus = def.storage_bonus
 	inst.battery_capacity_bonus = def.battery_capacity_bonus
 	inst.sprite_texture = textures_cache.get(def.id, null)
-	# Starting HQ is instant (100%), other buildings start as blueprints (0.0%)
-	inst.build_progress = 1.0 if (def_id == "hq" and skip_validation) else 0.0
+	# Starting free buildings (HQ, free starter mines) are instant (100%), other buildings start as blueprints (0.0%)
+	inst.build_progress = 1.0 if skip_validation else 0.0
 	
 	building_instances.append(inst)
 	return inst
