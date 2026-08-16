@@ -801,20 +801,18 @@ func _on_map_draw() -> void:
 	for i in range(power_emitters.size()):
 		var b1 = power_emitters[i]
 		var c1 = origin + (Vector2(b1.grid_pos) + Vector2(b1.size) * 0.5) * tile_sz
-		var r1 = BuildingSystem.POWER_GRID_HQ_RADIUS if b1.def_id == "hq" else BuildingSystem.POWER_GRID_PYLON_RADIUS
-		if b1.def_id == "power_plant": r1 = 4
+		var center1_tile = b1.grid_pos + Vector2i(1, 1) if b1.def_id == "hq" else b1.grid_pos
 		
 		for j in range(i + 1, power_emitters.size()):
 			var b2 = power_emitters[j]
 			if b1.slot != b2.slot: continue
 			
-			var r2 = BuildingSystem.POWER_GRID_HQ_RADIUS if b2.def_id == "hq" else BuildingSystem.POWER_GRID_PYLON_RADIUS
-			if b2.def_id == "power_plant": r2 = 4
+			var center2_tile = b2.grid_pos + Vector2i(1, 1) if b2.def_id == "hq" else b2.grid_pos
 			
-			var tile_dist = (Vector2(b1.grid_pos) + Vector2(b1.size) * 0.5).distance_to(Vector2(b2.grid_pos) + Vector2(b2.size) * 0.5)
-			var max_connect_dist = float(r1 + r2 + 2.0)
+			# Connect only if pylons/nodes are strictly within each other's power field
+			var in_range = BuildingSystem.is_tile_powered(center2_tile, [b1], b1.slot) or BuildingSystem.is_tile_powered(center1_tile, [b2], b2.slot)
 			
-			if tile_dist <= max_connect_dist:
+			if in_range:
 				var c2 = origin + (Vector2(b2.grid_pos) + Vector2(b2.size) * 0.5) * tile_sz
 				var slot_col = GameState.SLOT_COLORS[b1.slot] if b1.slot < GameState.SLOT_COLORS.size() else UITheme.COLOR_ACCENT_CYAN
 				
