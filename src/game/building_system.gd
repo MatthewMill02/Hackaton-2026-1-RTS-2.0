@@ -152,14 +152,14 @@ func _init() -> void:
 	_register_definitions()
 
 func _register_definitions() -> void:
-	_add_def("hq", "Kwatera Główna", "HQ", 2500, Vector2i(3, 3), {}, 50, 0, 0, 300, 1000, 0, false, "building_hq", 0.0)
+	_add_def("hq", "Kwatera Główna", "HQ", 2500, Vector2i(3, 3), {}, 50, 0, 0, 0, 1000, 0, false, "building_hq", 0.0)
 	_add_def("stone_mine", "Kopalnia Kamienia", "MINE", 400, Vector2i(1, 1), {"stone": 50, "iron": 20}, 0, 5, 5, 0, 0, 0, false, "building_mine_stone", 4.0)
 	_add_def("iron_mine", "Kopalnia Żelaza", "MINE", 400, Vector2i(1, 1), {"stone": 80, "iron": 30}, 0, 8, 8, 0, 0, 0, false, "building_mine_iron", 4.0)
 	_add_def("oil_pump", "Pompa Ropy", "MINE", 450, Vector2i(1, 1), {"stone": 100, "iron": 60}, 0, 10, 10, 0, 0, 0, false, "building_mine_iron", 5.0)
 	_add_def("redstone_mine", "Kopalnia Czerwienitu", "MINE", 500, Vector2i(1, 1), {"stone": 120, "iron": 90, "oil": 30}, 0, 12, 12, 0, 0, 0, false, "building_mine_stone", 5.0)
 	_add_def("pylon", "Pylon", "PYLON", 200, Vector2i(1, 1), {"stone": 40, "iron": 30}, 0, 1, 1, 0, 0, 0, false, "building_pylon", 2.5)
 	_add_def("factory", "Fabryka", "FACTORY", 500, Vector2i(2, 1), {"stone": 150, "iron": 100, "oil": 30}, 0, 10, 20, 0, 0, 0, false, "building_factory", 5.0)
-	_add_def("storage", "Magazyn", "STORAGE", 300, Vector2i(1, 1), {"stone": 100, "iron": 50}, 0, 0, 0, 500, 0, 0, false, "building_storage", 4.0)
+	_add_def("storage", "Magazyn", "STORAGE", 300, Vector2i(1, 1), {"stone": 100, "iron": 50}, 0, 0, 0, 200, 0, 0, false, "building_storage", 4.0)
 	_add_def("wall", "Mur", "WALL", 600, Vector2i(1, 1), {"stone": 30}, 0, 0, 0, 0, 0, 0, false, "building_wall", 2.0)
 	_add_def("turret", "Wieżyczka", "TURRET", 350, Vector2i(1, 1), {"stone": 80, "iron": 60}, 0, 2, 15, 0, 0, 1, false, "building_turret", 4.0)
 	_add_def("wall_turret", "Wieżyczka na Murze", "TURRET", 400, Vector2i(1, 1), {"stone": 60, "iron": 80}, 0, 2, 15, 0, 0, 1, true, "building_turret_wall", 4.0)

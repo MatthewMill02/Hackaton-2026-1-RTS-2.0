@@ -666,7 +666,7 @@ func _show_building_card(b_id: String, btn_pos: Vector2) -> void:
 		"power_plant": desc_text = "Wytwarza 100 kW stabilnej energii dla całej bazy i struktur obronnych."
 		"battery": desc_text = "Magazynuje nadwyżki energii (500 kJ) na wypadek przeciążenia sieci."
 		"factory": desc_text = "Produkuje roboty bojowe (Scoutbot, EMP Drone, Terminus Titan). Posiada ruchome okno produkcyjne."
-		"storage": desc_text = "Zwiększa maksymalną pojemność każdego zebranych surowców o 500 jednostek."
+		"storage": desc_text = "Zwiększa maksymalną pojemność każdego zebranych surowców o 200 jednostek."
 		"wall": desc_text = "Solidna przeszkoda terenowa o wysokiej wytrzymałości (600 HP)."
 		"turret": desc_text = "Szybki laser obronny. Atakuje wrogie jednostki i struktury w zasięgu 3 kratek (1 pocisk/0.25s)."
 		"lab": desc_text = "Centrum badań i ulepszeń. Pozwala tworzyć, odkrywać i sprzedawać karty technologiczne."
@@ -1554,7 +1554,7 @@ func _draw_hover_tooltip(grid_pos: Vector2i, tile_sz: float, origin: Vector2) ->
 				"iron_mine": stat_str = "Wydobycie: +6 Żelazo/s · Pobór: -8 kW"
 				"oil_pump": stat_str = "Wydobycie: +4 Ropa/s · Pobór: -10 kW"
 				"redstone_mine": stat_str = "Wydobycie: +3 Czerwienit/s · Pobór: -12 kW"
-				"storage": stat_str = "Magazyn: +500 jedn."
+				"storage": stat_str = "Magazyn: +200 jedn."
 				"turret", "wall_turret": stat_str = "Obrona laserowa (6 kr.) · Pobór: -2 kW"
 				_: stat_str = "Struktura operacyjna"
 				
