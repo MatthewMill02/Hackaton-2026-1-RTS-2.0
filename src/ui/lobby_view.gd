@@ -41,6 +41,11 @@ var current_points: int = 1200
 var current_duration: int = 45
 var is_creative: bool = false
 
+# Countdown Overlay
+var countdown_overlay: PanelContainer = null
+var countdown_num_lbl: Label = null
+var countdown_sub_lbl: Label = null
+
 func _init(p_net: NetworkManager = null, p_settings: SettingsManager = null, p_map: MapData = null) -> void:
 	network_manager = p_net
 	settings_manager = p_settings
@@ -52,7 +57,11 @@ func _init(p_net: NetworkManager = null, p_settings: SettingsManager = null, p_m
 
 func _ready() -> void:
 	_build_ui()
+	_build_countdown_overlay()
 	_update_room_code_display()
+	
+	if network_manager != null:
+		network_manager.match_countdown_updated.connect(_on_countdown_updated)
 	
 	# Initial welcome in chat
 	if network_manager and network_manager.is_host:
@@ -301,7 +310,7 @@ func _build_ui() -> void:
 	start_btn = Button.new()
 	start_btn.text = "START (MIN. 2)"
 	UITheme.style_button(start_btn, Color(0.12, 0.40, 0.25), UITheme.COLOR_SUCCESS_GREEN, 54, 20)
-	start_btn.pressed.connect(func(): start_game_requested.emit())
+	start_btn.pressed.connect(_on_start_btn_pressed)
 	side_vbox.add_child(start_btn)
 
 # ==============================================================================
@@ -331,7 +340,7 @@ func _build_map_interactive_elements(container: Control) -> void:
 		
 		var idx = i
 		base_btn.pressed.connect(func():
-			slot_selected.emit(idx)
+			_on_base_button_pressed(idx)
 		)
 		
 		container.add_child(base_btn)
@@ -345,6 +354,16 @@ func _build_map_interactive_elements(container: Control) -> void:
 		b_user.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
 		container.add_child(b_user)
 		base_player_lbls.append(b_user)
+
+func _on_base_button_pressed(idx: int) -> void:
+	if network_manager != null and network_manager.local_player != null:
+		if network_manager.local_player.slot == idx:
+			return
+		for p in network_manager.players.values():
+			if p.slot == idx and p.peer_id != network_manager.local_player.peer_id:
+				add_chat_entry("SYSTEM", "Baza %d jest już zajęta przez gracza %s!" % [idx + 1, p.name], true)
+				return
+	slot_selected.emit(idx)
 
 func _position_base_buttons_on_map() -> void:
 	# Called after drawing, to position buttons precisely over base areas
@@ -567,8 +586,11 @@ func update_lobby_state(players: Array, is_host: bool, local_peer_id: int) -> vo
 	_update_room_code_display()
 	
 	for i in range(GameState.MAX_PLAYERS):
-		base_player_lbls[i].text = "[KLIKNIJ ABY WYBRAĆ]"
-		base_player_lbls[i].add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+		if i < base_player_lbls.size():
+			base_player_lbls[i].text = "[KLIKNIJ ABY WYBRAĆ]"
+			base_player_lbls[i].add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+		if i < base_buttons.size():
+			base_buttons[i].mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		
 	for c in player_list_vbox.get_children():
 		c.queue_free()
@@ -585,31 +607,147 @@ func update_lobby_state(players: Array, is_host: bool, local_peer_id: int) -> vo
 			
 		var slot_col = GameState.SLOT_COLORS[p.slot] if p.slot < GameState.SLOT_COLORS.size() else UITheme.COLOR_ACCENT_CYAN
 		
-		# Update base button label on map preview
-		if p.slot >= 0 and p.slot < GameState.MAX_PLAYERS:
+		# Update base button label and cursor on map preview
+		if p.slot >= 0 and p.slot < GameState.MAX_PLAYERS and p.slot < base_player_lbls.size():
 			var slot_name = p.name
+			if p.peer_id == local_peer_id:
+				slot_name += " (TY)"
 			if p.is_host:
 				slot_name += " 👑"
 			elif p.is_ready:
 				slot_name += " ✓"
 			base_player_lbls[p.slot].text = slot_name
 			base_player_lbls[p.slot].add_theme_color_override("font_color", slot_col)
+			if p.slot < base_buttons.size():
+				if p.peer_id == local_peer_id:
+					base_buttons[p.slot].mouse_default_cursor_shape = Control.CURSOR_ARROW
+				else:
+					base_buttons[p.slot].mouse_default_cursor_shape = Control.CURSOR_FORBIDDEN
 			
 		# Add to right sidebar
-		var p_card = Label.new()
-		var desc = p.name
-		if p.is_host:
-			desc += " 👑 [HOST]"
-		else:
-			if p.is_ready:
-				desc += " [GOTOWY ✓]"
+		if not p.is_bot:
+			var p_panel = PanelContainer.new()
+			var sb_p = UITheme.create_panel_style(Color(0.06, 0.10, 0.16, 0.8), slot_col, 2, 1, 6)
+			p_panel.add_theme_stylebox_override("panel", sb_p)
+			player_list_vbox.add_child(p_panel)
+			
+			var p_box = HBoxContainer.new()
+			p_box.add_theme_constant_override("separation", 8)
+			p_panel.add_child(p_box)
+			
+			var p_card = Label.new()
+			var desc = p.name
+			if p.is_host:
+				desc += " 👑 [HOST]"
+			elif p.peer_id == local_peer_id:
+				desc += " (TY) [GOTOWY ✓]" if p.is_ready else " (TY) [CZEKA...]"
 			else:
-				desc += " [CZEKA... ⏳]"
-		desc += " · BAZA %d" % (p.slot + 1)
-		p_card.text = desc
-		p_card.add_theme_font_size_override("font_size", 16)
-		p_card.add_theme_color_override("font_color", slot_col)
-		player_list_vbox.add_child(p_card)
+				desc += " [GOTOWY ✓]" if p.is_ready else " [CZEKA... ⏳]"
+			desc += " · BAZA %d" % (p.slot + 1)
+			p_card.text = desc
+			p_card.add_theme_font_size_override("font_size", 14)
+			p_card.add_theme_color_override("font_color", slot_col)
+			p_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			p_box.add_child(p_card)
+		else:
+			# Interactive Bot Configuration Card
+			var bot_panel = PanelContainer.new()
+			var sb_b = UITheme.create_panel_style(Color(0.08, 0.12, 0.20, 0.95), UITheme.COLOR_ACCENT_CYAN, 4, 1.5, 8)
+			bot_panel.add_theme_stylebox_override("panel", sb_b)
+			player_list_vbox.add_child(bot_panel)
+			
+			var bot_vbox = VBoxContainer.new()
+			bot_vbox.add_theme_constant_override("separation", 6)
+			bot_panel.add_child(bot_vbox)
+			
+			# Row 1: Bot Header & Name & Delete
+			var r1 = HBoxContainer.new()
+			r1.add_theme_constant_override("separation", 6)
+			bot_vbox.add_child(r1)
+			
+			var bot_icon = Label.new()
+			bot_icon.text = "🤖"
+			bot_icon.add_theme_font_size_override("font_size", 16)
+			r1.add_child(bot_icon)
+			
+			var bot_id = p.peer_id
+			var bot_name_edit = LineEdit.new()
+			bot_name_edit.text = p.name
+			bot_name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			bot_name_edit.editable = is_host
+			bot_name_edit.text_submitted.connect(func(new_n: String):
+				if network_manager and is_host:
+					network_manager.update_bot_config(bot_id, new_n, p.slot, p.bot_difficulty)
+			)
+			r1.add_child(bot_name_edit)
+			
+			if is_host:
+				var del_btn = Button.new()
+				del_btn.text = "✕"
+				del_btn.custom_minimum_size = Vector2(28, 28)
+				UITheme.style_button(del_btn, Color(0.35, 0.12, 0.15), UITheme.COLOR_ACCENT_RED, 28, 12)
+				del_btn.pressed.connect(func():
+					if network_manager:
+						network_manager.remove_bot(bot_id)
+				)
+				r1.add_child(del_btn)
+				
+			# Row 2: Team / Base Selection & Difficulty Slider
+			var r2 = HBoxContainer.new()
+			r2.add_theme_constant_override("separation", 8)
+			bot_vbox.add_child(r2)
+			
+			var base_lbl = Label.new()
+			base_lbl.text = "Baza:"
+			base_lbl.add_theme_font_size_override("font_size", 12)
+			base_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+			r2.add_child(base_lbl)
+			
+			var base_opt = OptionButton.new()
+			for s_idx in range(GameState.MAX_PLAYERS):
+				base_opt.add_item("Baza %d" % (s_idx + 1), s_idx)
+			base_opt.selected = p.slot
+			base_opt.disabled = not is_host
+			base_opt.item_selected.connect(func(sel_idx: int):
+				if network_manager and is_host:
+					network_manager.update_bot_config(bot_id, p.name, sel_idx, p.bot_difficulty)
+			)
+			r2.add_child(base_opt)
+			
+			var diff_lbl = Label.new()
+			diff_lbl.text = "Trudność:"
+			diff_lbl.add_theme_font_size_override("font_size", 12)
+			diff_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+			r2.add_child(diff_lbl)
+			
+			var diff_names = ["1: Łatwy", "2: Normalny", "3: Trudny", "4: Ekspert", "5: Koszmar"]
+			var cur_diff_idx = clampi(p.bot_difficulty - 1, 0, 4)
+			var diff_val_lbl = Label.new()
+			diff_val_lbl.text = diff_names[cur_diff_idx]
+			diff_val_lbl.add_theme_font_size_override("font_size", 12)
+			diff_val_lbl.add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD)
+			
+			var diff_slider = HSlider.new()
+			diff_slider.min_value = 1
+			diff_slider.max_value = 5
+			diff_slider.step = 1
+			diff_slider.value = p.bot_difficulty
+			diff_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			diff_slider.editable = is_host
+			diff_slider.value_changed.connect(func(val: float):
+				var d_idx = clampi(int(val) - 1, 0, 4)
+				diff_val_lbl.text = diff_names[d_idx]
+				if network_manager and is_host:
+					network_manager.update_bot_config(bot_id, p.name, p.slot, int(val))
+			)
+			r2.add_child(diff_slider)
+			r2.add_child(diff_val_lbl)
+
+	if add_bot_btn != null:
+		add_bot_btn.visible = is_host
+		var can_add = count < GameState.MAX_PLAYERS
+		add_bot_btn.disabled = not can_add
+		add_bot_btn.text = "DODAJ BOTA (%d/4)" % count if can_add else "LOBBY PEŁNE (4/4)"
 
 	if is_host:
 		ready_btn.visible = false
@@ -668,15 +806,29 @@ func _change_points(delta_pts: int) -> void:
 	if network_manager and network_manager.is_host:
 		network_manager.send_chat("Zmieniono cel punktowy: %d pkt" % current_points)
 
-func _change_duration(delta_dur: int) -> void:
-	current_duration = clampi(current_duration + delta_dur, 5, 120)
+func _change_duration(delta_val: int) -> void:
+	current_duration = clampi(current_duration + delta_val, 5, 120)
 	duration_val_lbl.text = str(current_duration)
 	match_settings_changed.emit(is_creative, current_points, current_duration)
+
+func sync_settings_ui(p_creative: bool, p_points: int, p_dur: int) -> void:
+	is_creative = p_creative
+	current_points = p_points
+	current_duration = p_dur
+	if creative_check != null:
+		creative_check.set_pressed_no_signal(is_creative)
+	if points_val_lbl != null:
+		points_val_lbl.text = str(current_points)
+	if duration_val_lbl != null:
+		duration_val_lbl.text = str(current_duration)
 	if network_manager and network_manager.is_host:
 		network_manager.send_chat("Zmieniono czas rozgrywki: %d min" % current_duration)
 
 func _on_add_bot_pressed() -> void:
-	add_chat_entry("SYSTEM", "Dodano wirtualnego Bota do wolnej bazy.", true)
+	if network_manager and network_manager.is_host:
+		network_manager.add_bot()
+	else:
+		add_chat_entry("SYSTEM", "Dodano wirtualnego Bota do wolnej bazy.", true)
 
 func _on_copy_code_pressed() -> void:
 	if network_manager and not network_manager.room_code.is_empty():
@@ -688,3 +840,86 @@ func _on_chat_submitted(text: String) -> void:
 	if not clean.is_empty():
 		chat_submitted.emit(clean)
 		chat_input.clear()
+
+func _on_start_btn_pressed() -> void:
+	if network_manager and network_manager.countdown_active:
+		network_manager.cancel_countdown()
+	else:
+		start_game_requested.emit()
+
+func _build_countdown_overlay() -> void:
+	countdown_overlay = PanelContainer.new()
+	countdown_overlay.set_anchors_preset(PRESET_CENTER)
+	countdown_overlay.custom_minimum_size = Vector2(420, 240)
+	countdown_overlay.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	countdown_overlay.grow_vertical = Control.GROW_DIRECTION_BOTH
+	var sb = UITheme.create_panel_style(Color(0.02, 0.05, 0.10, 0.95), UITheme.COLOR_ACCENT_CYAN, 8, 2, 24)
+	countdown_overlay.add_theme_stylebox_override("panel", sb)
+	countdown_overlay.visible = false
+	countdown_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(countdown_overlay)
+	
+	var vbox = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 12)
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	countdown_overlay.add_child(vbox)
+	
+	var title = Label.new()
+	title.text = "ROZPOCZĘCIE ROZGRYWKI"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 16)
+	title.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+	vbox.add_child(title)
+	
+	countdown_num_lbl = Label.new()
+	countdown_num_lbl.text = "5"
+	countdown_num_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	countdown_num_lbl.add_theme_font_size_override("font_size", 72)
+	countdown_num_lbl.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
+	vbox.add_child(countdown_num_lbl)
+	
+	countdown_sub_lbl = Label.new()
+	countdown_sub_lbl.text = "Przygotuj się do bitwy!"
+	countdown_sub_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	countdown_sub_lbl.add_theme_font_size_override("font_size", 16)
+	countdown_sub_lbl.add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD)
+	vbox.add_child(countdown_sub_lbl)
+
+func _on_countdown_updated(seconds_left: int) -> void:
+	if countdown_overlay == null: return
+	
+	if seconds_left > 0:
+		countdown_overlay.visible = true
+		countdown_num_lbl.text = str(seconds_left)
+		
+		# Color and Subtitle scaling
+		if seconds_left >= 4:
+			countdown_num_lbl.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
+			countdown_sub_lbl.text = "Start za %d sekund... Wybierz taktykę!" % seconds_left
+			countdown_sub_lbl.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
+		elif seconds_left >= 2:
+			countdown_num_lbl.add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD)
+			countdown_sub_lbl.text = "Start za %d sekundy... Przygotuj się!" % seconds_left
+			countdown_sub_lbl.add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD)
+		else:
+			countdown_num_lbl.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_RED)
+			countdown_sub_lbl.text = "START ZA 1 SEKUNDĘ!"
+			countdown_sub_lbl.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_RED)
+			
+		if network_manager and network_manager.is_host and start_btn != null:
+			start_btn.text = "ANULUJ ODLICZANIE (✕)"
+			UITheme.style_button(start_btn, Color(0.35, 0.12, 0.15), UITheme.COLOR_ACCENT_RED, 54, 18)
+			
+	elif seconds_left == 0:
+		countdown_overlay.visible = true
+		countdown_num_lbl.text = "START!"
+		countdown_num_lbl.add_theme_color_override("font_color", UITheme.COLOR_SUCCESS_GREEN)
+		countdown_sub_lbl.text = "Uruchamianie pola bitwy..."
+		countdown_sub_lbl.add_theme_color_override("font_color", UITheme.COLOR_SUCCESS_GREEN)
+		
+	else:
+		# Cancelled (-1)
+		countdown_overlay.visible = false
+		if network_manager:
+			update_lobby_state(network_manager.get_players_list(), network_manager.is_host, multiplayer.get_unique_id())

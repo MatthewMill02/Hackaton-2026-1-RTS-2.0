@@ -30,6 +30,7 @@ class BuildingInstance:
 	var max_hp: int
 	var is_powered: bool = true
 	var build_progress: float = 1.0 # 0.0 to 1.0
+	var emp_overload_timer: float = 0.0 # EMP disable timer
 	var power_generation: int = 0
 	var power_draw_standby: int = 0
 	var storage_bonus: int = 0
@@ -59,9 +60,8 @@ static func get_power_offsets(radius: int) -> Array:
 			cuts[Vector2i(sign_x * radius, sign_y * (radius - 1))] = true
 	for dy in range(-radius, radius + 1):
 		for dx in range(-radius, radius + 1):
-			var off = Vector2i(dx, dy)
-			if not cuts.has(off):
-				offsets.append(off)
+			if not cuts.has(Vector2i(dx, dy)):
+				offsets.append(Vector2i(dx, dy))
 	return offsets
 
 static func get_powered_tiles(center: Vector2i, radius: int) -> Array:
@@ -72,7 +72,7 @@ static func get_powered_tiles(center: Vector2i, radius: int) -> Array:
 
 static func is_tile_powered(tile: Vector2i, buildings_list: Array, player_slot: int) -> bool:
 	for b in buildings_list:
-		if b.slot != player_slot or b.hp <= 0:
+		if b.slot != player_slot or b.hp <= 0 or b.emp_overload_timer > 0.0 or b.build_progress < 1.0:
 			continue
 		var radius: int = 0
 		var b_center: Vector2i = b.grid_pos
@@ -101,6 +101,17 @@ static func is_tile_powered(tile: Vector2i, buildings_list: Array, player_slot: 
 				return true
 	return false
 
+func update_timers(delta: float, local_slot: int = -1, research: ResearchSystem = null) -> void:
+	for b in building_instances:
+		if b.emp_overload_timer > 0.0:
+			b.emp_overload_timer = maxf(0.0, b.emp_overload_timer - delta)
+			
+		# Structure Regen passive research perk
+		if research != null and research.structure_regen_pct > 0.0:
+			if b.slot == local_slot and b.build_progress >= 1.0 and b.hp > 0 and b.hp < b.max_hp and b.is_powered:
+				var heal_amt = ceilf(b.max_hp * research.structure_regen_pct * delta)
+				b.hp = mini(b.max_hp, b.hp + int(heal_amt))
+
 func _init() -> void:
 	_register_definitions()
 
@@ -108,6 +119,8 @@ func _register_definitions() -> void:
 	_add_def("hq", "Kwatera Główna", "HQ", 2500, Vector2i(3, 3), {}, 50, 0, 0, 300, 1000, 0, false, "building_hq", 0.0)
 	_add_def("stone_mine", "Kopalnia Kamienia", "MINE", 400, Vector2i(1, 1), {"stone": 50, "iron": 20}, 0, 5, 5, 0, 0, 0, false, "building_mine_stone", 4.0)
 	_add_def("iron_mine", "Kopalnia Żelaza", "MINE", 400, Vector2i(1, 1), {"stone": 80, "iron": 30}, 0, 8, 8, 0, 0, 0, false, "building_mine_iron", 4.0)
+	_add_def("oil_pump", "Pompa Ropy", "MINE", 450, Vector2i(1, 1), {"stone": 100, "iron": 60}, 0, 10, 10, 0, 0, 0, false, "building_mine_iron", 5.0)
+	_add_def("redstone_mine", "Kopalnia Czerwienitu", "MINE", 500, Vector2i(1, 1), {"stone": 120, "iron": 90, "oil": 30}, 0, 12, 12, 0, 0, 0, false, "building_mine_stone", 5.0)
 	_add_def("pylon", "Pylon", "PYLON", 200, Vector2i(1, 1), {"stone": 40, "iron": 30}, 0, 1, 1, 0, 0, 0, false, "building_pylon", 2.5)
 	_add_def("factory", "Fabryka", "FACTORY", 500, Vector2i(2, 1), {"stone": 150, "iron": 100, "oil": 30}, 0, 10, 20, 0, 0, 0, false, "building_factory", 5.0)
 	_add_def("storage", "Magazyn", "STORAGE", 300, Vector2i(1, 1), {"stone": 100, "iron": 50}, 0, 0, 0, 500, 0, 0, false, "building_storage", 4.0)
@@ -182,8 +195,37 @@ func is_position_valid_for_building(
 		var camp_rect = Rect2i(camp.grid_pos - Vector2i(1, 1), Vector2i(3, 3))
 		if Rect2i(grid_pos, def.size).intersects(camp_rect):
 			return {"valid": false, "reason": "Nie można budować w strefie neutralnej/bossa"}
+
+	# 4. Resource Node & Deposit Placement Check
+	var required_res_type: int = -1
+	match def_id:
+		"stone_mine":
+			required_res_type = MapData.ResourceType.STONE
+		"iron_mine":
+			required_res_type = MapData.ResourceType.IRON
+		"oil_pump":
+			required_res_type = MapData.ResourceType.OIL
+		"redstone_mine":
+			required_res_type = MapData.ResourceType.REDSTONE
+
+	if required_res_type >= 0:
+		# Must be placed on matching resource node
+		var found_node = false
+		for r in map_data.resources:
+			if r.grid_pos == grid_pos and r.type == required_res_type:
+				found_node = true
+				break
+		if not found_node:
+			var res_names = ["Kamienia", "Żelaza", "Ropy", "Czerwienitu"]
+			var r_name = res_names[required_res_type] if required_res_type < res_names.size() else "surowca"
+			return {"valid": false, "reason": "Ten budynek musi stać na złożu %s!" % r_name}
+	else:
+		# Non-mine buildings cannot be placed on top of resource nodes
+		for r in map_data.resources:
+			if Rect2i(grid_pos, def.size).has_point(r.grid_pos):
+				return {"valid": false, "reason": "Nie można stawiać zwykłych budynków na złożu surowca!"}
 			
-	# 4. Power Grid Tile Check (Must be within HQ/Pylon tile coverage of the player)
+	# 5. Power Grid Tile Check (Must be within HQ/Pylon tile coverage of the player)
 	var in_power_range = false
 	for dy in range(def.size.y):
 		for dx in range(def.size.x):
@@ -205,7 +247,8 @@ func place_building(
 	player_slot: int,
 	map_data: MapData,
 	economy: EconomyManager,
-	skip_validation: bool = false
+	skip_validation: bool = false,
+	override_id: int = -1
 ) -> BuildingInstance:
 	var def = get_def(def_id)
 	if def == null: return null
@@ -227,8 +270,13 @@ func place_building(
 				break
 				
 	var inst = BuildingInstance.new()
-	inst.instance_id = next_instance_id
-	next_instance_id += 1
+	if override_id > 0:
+		inst.instance_id = override_id
+		next_instance_id = maxi(next_instance_id, override_id + 1)
+	else:
+		inst.instance_id = player_slot * 10000 + next_instance_id
+		next_instance_id += 1
+		
 	inst.def_id = def.id
 	inst.name = def.name
 	inst.slot = player_slot
@@ -241,12 +289,50 @@ func place_building(
 	inst.storage_bonus = def.storage_bonus
 	inst.battery_capacity_bonus = def.battery_capacity_bonus
 	inst.sprite_texture = textures_cache.get(def.id, null)
-	inst.build_progress = 1.0
+	# Starting HQ is instant (100%), other buildings start as blueprints (0.0%)
+	inst.build_progress = 1.0 if (def_id == "hq" and skip_validation) else 0.0
 	
 	building_instances.append(inst)
 	return inst
 
-func demolish_building_at(grid_pos: Vector2i, player_slot: int, economy: EconomyManager) -> bool:
+func spawn_remote_building(def_id: String, grid_pos: Vector2i, player_slot: int, building_id: int) -> BuildingInstance:
+	# Check if already exists
+	for b in building_instances:
+		if b.instance_id == building_id or (b.grid_pos == grid_pos and b.slot == player_slot):
+			return b
+			
+	var def = get_def(def_id)
+	if def == null: return null
+	
+	# Replace wall if wall turret
+	if def.wall_mounted:
+		for i in range(building_instances.size() - 1, -1, -1):
+			var b = building_instances[i]
+			if b.def_id == "wall" and b.grid_pos == grid_pos:
+				building_instances.remove_at(i)
+				break
+				
+	var inst = BuildingInstance.new()
+	inst.instance_id = building_id
+	next_instance_id = maxi(next_instance_id, building_id + 1)
+	inst.def_id = def.id
+	inst.name = def.name
+	inst.slot = player_slot
+	inst.grid_pos = grid_pos
+	inst.size = def.size
+	inst.hp = def.max_hp
+	inst.max_hp = def.max_hp
+	inst.power_generation = def.power_generation
+	inst.power_draw_standby = def.power_draw_standby
+	inst.storage_bonus = def.storage_bonus
+	inst.battery_capacity_bonus = def.battery_capacity_bonus
+	inst.sprite_texture = textures_cache.get(def.id, null)
+	inst.build_progress = 1.0 if def_id == "hq" else 0.0
+	
+	building_instances.append(inst)
+	return inst
+
+func demolish_building_at(grid_pos: Vector2i, player_slot: int, economy: EconomyManager = null) -> bool:
 	for i in range(building_instances.size() - 1, -1, -1):
 		var b = building_instances[i]
 		var b_rect = Rect2i(b.grid_pos, b.size)
@@ -254,7 +340,7 @@ func demolish_building_at(grid_pos: Vector2i, player_slot: int, economy: Economy
 			if b.def_id == "hq":
 				return false # Cannot demolish HQ!
 			var def = get_def(b.def_id)
-			if def != null:
+			if def != null and economy != null:
 				economy.refund_resources(def.cost, 0.5)
 			building_instances.remove_at(i)
 			return true

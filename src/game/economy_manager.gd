@@ -40,6 +40,18 @@ func reset_for_match(starting_storage: int = 300) -> void:
 	stored_energy_kj = 1000.0
 	is_blackout = false
 
+func enable_creative_mode() -> void:
+	stone = 10000000
+	iron = 10000000
+	oil = 10000000
+	redstone = 10000000
+	base_storage = 100000000
+	max_storage = 100000000
+	power_production = 100000
+	battery_capacity_kj = 10000000
+	stored_energy_kj = 10000000.0
+	is_blackout = false
+
 func can_afford(cost: Dictionary) -> bool:
 	var req_stone = cost.get("stone", 0)
 	var req_iron = cost.get("iron", 0)
@@ -87,9 +99,12 @@ func refund_resources(cost: Dictionary, ratio: float = 0.5) -> void:
 	redstone = mini(redstone + ret_red, max_storage)
 	_emit_update()
 
-func update_grid(delta: float, buildings: Array) -> void:
-	# Recalculate Power & Storage from all operational buildings
+func update_grid(delta: float, buildings: Array, local_slot: int = -1, research: ResearchSystem = null) -> void:
+	# Recalculate Power & Storage strictly for the local player's operational buildings
 	var prod = 50 # Base HQ power
+	if research != null:
+		prod += int(research.hq_power_bonus)
+		
 	var cons = 0
 	var extra_storage = 0
 	var extra_battery = 1000 # Base HQ battery
@@ -99,19 +114,22 @@ func update_grid(delta: float, buildings: Array) -> void:
 	for b in buildings:
 		if b.build_progress < 1.0 or b.hp <= 0:
 			continue
+		if local_slot >= 0 and b.slot != local_slot:
+			continue
 			
 		prod += b.power_generation
 		cons += b.power_draw_standby
 		extra_storage += b.storage_bonus
 		extra_battery += b.battery_capacity_bonus
 		
-		if b.def_id in ["stone_mine", "iron_mine"] and not is_blackout:
+		if b.def_id in ["stone_mine", "iron_mine", "oil_pump", "redstone_mine"] and not is_blackout:
 			active_mines.append(b)
 			
 	power_production = prod
 	power_consumption = cons
 	max_storage = base_storage + extra_storage
-	battery_capacity_kj = extra_battery
+	var bat_mult = research.battery_capacity_mult if research != null else 1.0
+	battery_capacity_kj = int(extra_battery * bat_mult)
 	
 	var net_power = power_production - power_consumption
 	
@@ -135,11 +153,16 @@ func update_grid(delta: float, buildings: Array) -> void:
 	mining_accumulator += delta
 	if mining_accumulator >= 1.0:
 		mining_accumulator = 0.0
+		var mine_mult = research.mining_multiplier if research != null else 1.0
 		for mine in active_mines:
 			if mine.def_id == "stone_mine":
-				add_resource(MapData.ResourceType.STONE, 8)
+				add_resource(MapData.ResourceType.STONE, int(8 * mine_mult))
 			elif mine.def_id == "iron_mine":
-				add_resource(MapData.ResourceType.IRON, 6)
+				add_resource(MapData.ResourceType.IRON, int(6 * mine_mult))
+			elif mine.def_id == "oil_pump":
+				add_resource(MapData.ResourceType.OIL, int(4 * mine_mult))
+			elif mine.def_id == "redstone_mine":
+				add_resource(MapData.ResourceType.REDSTONE, int(3 * mine_mult))
 				
 	_emit_update()
 

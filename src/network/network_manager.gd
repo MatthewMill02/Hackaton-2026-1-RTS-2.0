@@ -10,6 +10,21 @@ signal match_started()
 signal session_disconnected(reason: String)
 signal lobby_public_status_changed(is_public: bool)
 
+# Gameplay Synchronization Signals
+signal map_seed_synced(seed_val: int)
+signal remote_building_placed(def_id: String, grid_pos: Vector2i, slot: int, building_id: int)
+signal remote_building_demolished(grid_pos: Vector2i, slot: int)
+signal remote_unit_moved(unit_ids: Array, target_pos: Vector2)
+signal remote_unit_gathered(unit_ids: Array, res_grid_pos: Vector2i)
+signal remote_unit_attacked(unit_ids: Array, camp_grid_pos: Vector2i)
+signal remote_unit_constructed(unit_ids: Array, building_id: int)
+signal remote_unit_spawned(def_id: String, slot: int, unit_id: int, spawn_pos: Vector2)
+signal remote_units_snapshot(slot: int, snapshot: Array)
+signal remote_turret_fired(from_pos: Vector2, to_pos: Vector2, is_wall_turret: bool)
+signal remote_camp_damaged(camp_grid_pos: Vector2i, damage: int, killer_slot: int)
+signal match_settings_synced(creative: bool, points: int, duration_min: int)
+signal match_countdown_updated(seconds_left: int)
+
 var peer: ENetMultiplayerPeer = null
 var discovery: LobbyDiscovery = null
 
@@ -24,6 +39,14 @@ var server_ip: String = "127.0.0.1"
 var server_port: int = GameState.DEFAULT_PORT
 var room_code: String = ""
 var is_public: bool = true
+var current_map_seed: int = 0
+
+var is_creative: bool = false
+var match_target_score: int = 1200
+var match_duration_min: int = 45
+
+var countdown_active: bool = false
+var current_countdown_sec: int = -1
 
 func _ready() -> void:
 	discovery = LobbyDiscovery.new()
@@ -164,6 +187,12 @@ func toggle_ready() -> void:
 func change_slot(desired_slot: int) -> void:
 	if local_player == null or desired_slot < 0 or desired_slot >= GameState.MAX_PLAYERS:
 		return
+	if local_player.slot == desired_slot:
+		return
+	for p in players.values():
+		if p.slot == desired_slot and p.peer_id != local_player.peer_id:
+			chat_message_received.emit("SYSTEM", "Baza %d jest już zajęta przez gracza %s!" % [desired_slot + 1, p.name], true)
+			return
 	if multiplayer.is_server():
 		_perform_slot_change(1, desired_slot)
 	else:
@@ -185,7 +214,117 @@ func start_match() -> void:
 			chat_message_received.emit("SYSTEM", "Nie wszyscy gracze są gotowi!", true)
 			return
 			
+	if countdown_active:
+		cancel_countdown()
+	else:
+		start_match_countdown(5)
+
+func start_match_countdown(duration: int = 5) -> void:
+	if not multiplayer.is_server():
+		return
+		
+	for p_id in players:
+		var p: PlayerData = players[p_id]
+		if not p.is_ready and not p.is_host:
+			chat_message_received.emit("SYSTEM", "Nie wszyscy gracze są gotowi!", true)
+			return
+			
+	countdown_active = true
+	_run_countdown_sequence(duration)
+
+func cancel_countdown() -> void:
+	if not multiplayer.is_server() or not countdown_active:
+		return
+	countdown_active = false
+	current_countdown_sec = -1
+	rpc("sync_countdown", -1)
+	rpc("receive_chat", "SYSTEM", "Odliczanie do startu zostało anulowane.", true)
+
+func _run_countdown_sequence(duration: int) -> void:
+	for i in range(duration, 0, -1):
+		if not countdown_active:
+			return
+		current_countdown_sec = i
+		rpc("sync_countdown", i)
+		rpc("receive_chat", "START", "Start meczu za %d..." % i, true)
+		await get_tree().create_timer(1.0).timeout
+		
+	if not countdown_active:
+		return
+		
+	countdown_active = false
+	current_countdown_sec = 0
+	rpc("sync_countdown", 0)
+	await get_tree().create_timer(0.4).timeout
 	rpc("trigger_match_start")
+
+@rpc("authority", "call_local", "reliable")
+func sync_countdown(seconds_left: int) -> void:
+	current_countdown_sec = seconds_left
+	match_countdown_updated.emit(seconds_left)
+
+func add_bot() -> void:
+	if not multiplayer.is_server() or players.size() >= GameState.MAX_PLAYERS:
+		return
+		
+	var used_slots: Array[int] = []
+	var bot_count = 0
+	for p in players.values():
+		used_slots.append(p.slot)
+		if p.is_bot:
+			bot_count += 1
+			
+	var assigned_slot = -1
+	for i in range(GameState.MAX_PLAYERS):
+		if not used_slots.has(i):
+			assigned_slot = i
+			break
+			
+	if assigned_slot == -1:
+		return
+		
+	var bot_id = -100 - (bot_count + 1)
+	var bot_names = ["CYBER-BOT", "UNIT-OMEGA", "SENTINEL-AI", "VALKYRIE-BOT"]
+	var bot_name = bot_names[bot_count % bot_names.size()]
+	
+	var bot_player = PlayerData.new(bot_id, bot_name, assigned_slot, false, true)
+	bot_player.bot_difficulty = 2 # Normalny
+	players[bot_id] = bot_player
+	
+	_broadcast_player_list()
+	discovery.update_broadcaster(is_public, players.size())
+	rpc("receive_chat", "SYSTEM", "Dodano Bota [b]%s[/b] do Bazy %d." % [bot_name, assigned_slot + 1], true)
+
+func remove_bot(bot_id: int) -> void:
+	if not multiplayer.is_server():
+		return
+	if players.has(bot_id) and players[bot_id].is_bot:
+		var b_name = players[bot_id].name
+		players.erase(bot_id)
+		_broadcast_player_list()
+		discovery.update_broadcaster(is_public, players.size())
+		rpc("receive_chat", "SYSTEM", "Usunięto Bota [b]%s[/b]." % b_name, true)
+
+func update_bot_config(bot_id: int, new_name: String, new_slot: int, new_difficulty: int) -> void:
+	if not multiplayer.is_server():
+		return
+	if players.has(bot_id) and players[bot_id].is_bot:
+		var bot: PlayerData = players[bot_id]
+		if not new_name.strip_edges().is_empty():
+			bot.name = new_name.strip_edges()
+		bot.bot_difficulty = clampi(new_difficulty, 1, 5)
+		
+		if new_slot >= 0 and new_slot < GameState.MAX_PLAYERS and new_slot != bot.slot:
+			var is_taken = false
+			for p in players.values():
+				if p.peer_id != bot_id and p.slot == new_slot:
+					is_taken = true
+					break
+			if not is_taken:
+				bot.slot = new_slot
+				bot.color = GameState.SLOT_COLORS[new_slot]
+				
+		_broadcast_player_list()
 
 func get_players_list() -> Array:
 	var list: Array = []
@@ -283,6 +422,9 @@ func register_player(data: Dictionary) -> void:
 	discovery.update_broadcaster(is_public, players.size())
 	
 	rpc_id(sender_id, "sync_lobby_settings", room_code, is_public)
+	rpc_id(sender_id, "sync_match_settings", is_creative, match_target_score, match_duration_min)
+	if current_map_seed != 0:
+		rpc_id(sender_id, "sync_map_seed", current_map_seed)
 	rpc("receive_chat", "SYSTEM", "%s dołączył do lobby!" % new_player.name, true)
 
 @rpc("any_peer", "call_local", "reliable")
@@ -304,6 +446,8 @@ func _perform_slot_change(sender_id: int, target_slot: int) -> void:
 			
 	if players.has(sender_id):
 		var p: PlayerData = players[sender_id]
+		if p.slot == target_slot:
+			return
 		p.slot = target_slot
 		p.color = GameState.SLOT_COLORS[target_slot]
 		if sender_id == multiplayer.get_unique_id() and local_player != null:
@@ -325,6 +469,20 @@ func set_player_ready(p_id: int, ready_val: bool) -> void:
 		if multiplayer.is_server():
 			_broadcast_player_list()
 			rpc("receive_chat", "GRACZ", "%s jest %s!" % [players[p_id].name, "GOTOWY" if ready_val else "NIEGOTOWY"], true)
+
+func send_match_settings(p_creative: bool, p_points: int, p_duration: int) -> void:
+	is_creative = p_creative
+	match_target_score = p_points
+	match_duration_min = p_duration
+	if multiplayer.multiplayer_peer != null and multiplayer.is_server():
+		rpc("sync_match_settings", p_creative, p_points, p_duration)
+
+@rpc("authority", "call_local", "reliable")
+func sync_match_settings(p_creative: bool, p_points: int, p_duration: int) -> void:
+	is_creative = p_creative
+	match_target_score = p_points
+	match_duration_min = p_duration
+	match_settings_synced.emit(is_creative, match_target_score, match_duration_min)
 
 @rpc("authority", "reliable")
 func sync_player_list(players_array: Array) -> void:
@@ -351,6 +509,100 @@ func receive_chat(sender: String, msg: String, is_sys: bool) -> void:
 func trigger_match_start() -> void:
 	chat_message_received.emit("START", "Gra rozpoczęta! Przygotuj swoje jednostki i broń bazy!", true)
 	match_started.emit()
+
+# ==============================================================================
+# In-Game Real-Time Gameplay RPCs
+# ==============================================================================
+
+func send_map_seed(seed_val: int) -> void:
+	current_map_seed = seed_val
+	if multiplayer.multiplayer_peer != null and multiplayer.is_server():
+		rpc("sync_map_seed", seed_val)
+
+@rpc("authority", "call_local", "reliable")
+func sync_map_seed(seed_val: int) -> void:
+	current_map_seed = seed_val
+	map_seed_synced.emit(seed_val)
+
+func send_place_building(def_id: String, grid_pos: Vector2i, slot: int, building_id: int) -> void:
+	if multiplayer.multiplayer_peer != null:
+		rpc("sync_place_building", def_id, grid_pos, slot, building_id)
+
+@rpc("any_peer", "reliable")
+func sync_place_building(def_id: String, grid_pos: Vector2i, slot: int, building_id: int) -> void:
+	remote_building_placed.emit(def_id, grid_pos, slot, building_id)
+
+func send_demolish_building(grid_pos: Vector2i, slot: int) -> void:
+	if multiplayer.multiplayer_peer != null:
+		rpc("sync_demolish_building", grid_pos, slot)
+
+@rpc("any_peer", "reliable")
+func sync_demolish_building(grid_pos: Vector2i, slot: int) -> void:
+	remote_building_demolished.emit(grid_pos, slot)
+
+func send_unit_move(unit_ids: Array, target_pos: Vector2) -> void:
+	if multiplayer.multiplayer_peer != null:
+		rpc("sync_unit_move", unit_ids, target_pos)
+
+@rpc("any_peer", "reliable")
+func sync_unit_move(unit_ids: Array, target_pos: Vector2) -> void:
+	remote_unit_moved.emit(unit_ids, target_pos)
+
+func send_unit_gather(unit_ids: Array, res_grid_pos: Vector2i) -> void:
+	if multiplayer.multiplayer_peer != null:
+		rpc("sync_unit_gather", unit_ids, res_grid_pos)
+
+@rpc("any_peer", "reliable")
+func sync_unit_gather(unit_ids: Array, res_grid_pos: Vector2i) -> void:
+	remote_unit_gathered.emit(unit_ids, res_grid_pos)
+
+func send_unit_attack(unit_ids: Array, camp_grid_pos: Vector2i) -> void:
+	if multiplayer.multiplayer_peer != null:
+		rpc("sync_unit_attack", unit_ids, camp_grid_pos)
+
+@rpc("any_peer", "reliable")
+func sync_unit_attack(unit_ids: Array, camp_grid_pos: Vector2i) -> void:
+	remote_unit_attacked.emit(unit_ids, camp_grid_pos)
+
+func send_unit_construct(unit_ids: Array, building_id: int) -> void:
+	if multiplayer.multiplayer_peer != null:
+		rpc("sync_unit_construct", unit_ids, building_id)
+
+@rpc("any_peer", "reliable")
+func sync_unit_construct(unit_ids: Array, building_id: int) -> void:
+	remote_unit_constructed.emit(unit_ids, building_id)
+
+func send_unit_spawn(def_id: String, slot: int, unit_id: int, spawn_pos: Vector2) -> void:
+	if multiplayer.multiplayer_peer != null:
+		rpc("sync_unit_spawn", def_id, slot, unit_id, spawn_pos)
+
+@rpc("any_peer", "reliable")
+func sync_unit_spawn(def_id: String, slot: int, unit_id: int, spawn_pos: Vector2) -> void:
+	remote_unit_spawned.emit(def_id, slot, unit_id, spawn_pos)
+
+func send_units_snapshot(slot: int, snapshot: Array) -> void:
+	if multiplayer.multiplayer_peer != null:
+		rpc("sync_units_snapshot", slot, snapshot)
+
+@rpc("any_peer", "unreliable")
+func sync_units_snapshot(slot: int, snapshot: Array) -> void:
+	remote_units_snapshot.emit(slot, snapshot)
+
+func send_turret_fire(from_pos: Vector2, to_pos: Vector2, is_wall_turret: bool) -> void:
+	if multiplayer.multiplayer_peer != null:
+		rpc("sync_turret_fire", from_pos, to_pos, is_wall_turret)
+
+@rpc("any_peer", "unreliable")
+func sync_turret_fire(from_pos: Vector2, to_pos: Vector2, is_wall_turret: bool) -> void:
+	remote_turret_fired.emit(from_pos, to_pos, is_wall_turret)
+
+func send_camp_damage(camp_grid_pos: Vector2i, damage: int, killer_slot: int) -> void:
+	if multiplayer.multiplayer_peer != null:
+		rpc("sync_camp_damage", camp_grid_pos, damage, killer_slot)
+
+@rpc("any_peer", "reliable")
+func sync_camp_damage(camp_grid_pos: Vector2i, damage: int, killer_slot: int) -> void:
+	remote_camp_damaged.emit(camp_grid_pos, damage, killer_slot)
 
 # ==============================================================================
 # Helper Methods

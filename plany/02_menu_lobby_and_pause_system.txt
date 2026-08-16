@@ -1,0 +1,41 @@
+================================================================================
+          SPECYFIKACJA PROJEKTU: AUTOMATA TECH-WAR (PROTOTYP RTS MVP)
+            CZĘŚĆ 2: MENU GŁÓWNE, INTERAKTYWNE LOBBY I SYSTEM PAUZY
+================================================================================
+
+--------------------------------------------------------------------------------
+1. MENU GŁÓWNE (KRUNKER-STYLE / BROWSER UI)
+--------------------------------------------------------------------------------
+- Brak wymogu zakładania kont / Rejestracji.
+- Wygląd: Jednoekranowe menu z tłem generującym dynamiczne linie sieci energetycznej.
+- Profil Gracza:
+  * Generowanie domyślnego nicku (np. Player_1234) z opcją natychmiastowej edycji.
+  * Wybór Avatara z dostępnej karuzeli / siatki ikonek (0-7).
+  * Wybór unikalnego koloru gracza do oznaczania baz i jednostek.
+- Przyciski Akcji:
+  * [HOST GAME]: Tworzy nową sesję P2P (PeerJS) i generuje Kod Pokoju.
+  * [JOIN GAME]: Otwiera listę serwerów lub okno do wklejenia Kodu Pokoju / Linku.
+
+--------------------------------------------------------------------------------
+2. DYNAMICZNE LOBBY (MINI-WORLD INTERACTIVE LOBBY)
+--------------------------------------------------------------------------------
+- Wygląd Lobby: Ekran renderuje całą mapę gry w skali dopasowanej do ekranu (Fit-to-Screen).
+- Mechanika Pozycji Startowych:
+  * Środek mapy stanowi "Strefę Oczekiwania" dla połączonych graczy (widoczne Avatary + Nickname).
+  * Na krańcach mapy widoczne są 4 docelowe Bazy Startowe (Kwatery Główne).
+  * Gracze mogą kliknięciem myszy lub nawigacją (lewo/prawo/góra/dół) przydzielić swój Avatar do konkretnej Bazy.
+  * W przypadku braku wyboru do momentu startu, system automatycznie i losowo przydziela graczy do wolnych baz.
+- Start Gry: Host uruchamia odliczanie (3... 2... 1...), po czym następuje płynne przybliżenie kamery (Zoom-In) do bazy gracza i rozpoczęcie meczu.
+
+--------------------------------------------------------------------------------
+3. SYSTEM PAUZY I MENU ESCAPE (NORTHGARD STYLE)
+--------------------------------------------------------------------------------
+- Wywołanie: Przycisk ESC otwiera Menu Ustawień (Audio, Efekty, Opuść Mecz) oraz Przycisk Pauzy.
+- Mechanika Pauzy Ogólnej:
+  * Wstrzymuje całą pętlę gry (UPDATE loop) u wszystkich połączonych graczy.
+  * Wyświetla komunikat informujący, KTO zapauzował grę.
+  * Licznik czasu pauzy: Odlicza czas od momentu pauzy do przodu (MM:SS), pokazując czas trwania przerwy.
+- Hierarchia Uprawnień Odpauzowania:
+  * Gracze mogą zdjąć TYLKO swoją pauzę.
+  * Host posiada uprawnienia nadrzędne (Master Override) – może zdjąć pauzę dowolnego gracza, zapobiegając blokowaniu meczu.
+================================================================================

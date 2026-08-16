@@ -1,0 +1,72 @@
+================================================================================
+          SPECYFIKACJA PROJEKTU: AUTOMATA TECH-WAR (PROTOTYP RTS MVP)
+               CZĘŚĆ 1: WIDOK, MAPA, EKONOMIA, SUROWCE I DEFENSYWA
+================================================================================
+
+--------------------------------------------------------------------------------
+1. KAMERA, SILNIK I WIDOK MAPY
+--------------------------------------------------------------------------------
+- Styl widoku: Top-Down / 2.5D z płaską siatką (styl "Don't Starve" / "The Binding of Isaac").
+- Układ współrzędnych: Prostopadła siatka kafelków (Grid System Orthographic, np. 64x64px per kafelek).
+- Sterowanie kamerą: 
+  * Przesuwanie: Klawisze WASD / Strzałki / Przeciąganie mapy myszą.
+  * Zoom: Kółko myszy (Zoom In / Zoom Out do podglądu całej sieci).
+- Mechanika stawiania obiektów: Wszystkie budynki, pylony i mury automatycznie przyciągają się do siatki (Snap to Grid).
+
+--------------------------------------------------------------------------------
+2. SYSTEM SUROWCÓW I MAGAZYNOWANIA
+--------------------------------------------------------------------------------
+W grze występują 4 główne surowce fizyczne gromadzone w skarbcu/magazynach oraz Pasywny Prąd.
+
+A) SUROWCE FIZYCZNE (Gromadzone na zapas):
+   1. Kamień (Podstawa Budowlana):
+      - Wykorzystanie: Mury obronne, wieżyczki, Pylony, magazyny.
+   2. Żelazo (Podstawa Przemysłowa):
+      - Wykorzystanie: Budynki produkcyjne, jednostki, AMUNICJA DO WIEŻYCZEK.
+   3. Ropa (Paliwo i Mobilność):
+      - Wykorzystanie: Drony logistyczne, ciężkie jednostki bojowe, silniki.
+   4. Czerwienit / RedKnight (High-Tech / Logika):
+      - Wykorzystanie: Wieże laserowe, drony EMP, zaawansowane badania techniczne.
+
+B) POJEMNOŚĆ MAGAZYNOWA:
+   - Gracz rozpoczyna z domyślnym limitem magazynowania (np. 500 szt. każdego surowca).
+   - Budowa Silosów / Magazynów zwiększa górny limit przechowywania zapasów.
+
+--------------------------------------------------------------------------------
+3. MECHANIKA ENERGII (POWER GRID & ENERGY BANKS)
+--------------------------------------------------------------------------------
+- Prąd działa jako bilans mocy (kW/s) połączony z pojemnością akumulatorów (kJ).
+- Stan Dodatni (+kW): Nadwyżka wyprodukowanego prądu ładuje lokalne Banki Energii (Akumulatory).
+- Efekt Przerwania Sieci / EMP:
+  * Budynki i wieżyczki odcięte od Elektrowni NIE wyłączają się natychmiastowo.
+  * Zaczynają czerpać prąd z naładowanych Banków Energii (bufor czasu na reakcję gracza, np. 15 sekund).
+- Wyczyszczenie Baterii (0 kJ): Całkowity Blackout strefy (wyłączenie fabryk i wieżyczek).
+
+--------------------------------------------------------------------------------
+4. DEFENSYWA I LOGIKA WIEŻYCZEK
+--------------------------------------------------------------------------------
+A) DWA TRYBY PRACY WIEŻYCZEK:
+   1. Tryb Czuwania (Standby):
+      - Brak celów w zasięgu.
+      - Pobór Prądu: Śladowy (np. -2 kW/s na podtrzymanie radaru).
+      - Zużycie Żelaza (Amunicja): 0 szt./s.
+   2. Tryb Bojowy (Active Fire):
+      - Wykryto wroga w zasięgu.
+      - Pobór Prądu: Wysoki (np. -15 kW/s).
+      - Zużycie Żelaza (Amunicja): Pobiera niewielką ilość Żelaza z magazynu głównego przy każdym strzale/serii (np. -1 Żelazo/seria).
+      - Brak Żelaza w magazynie: Wieżyczka wstrzymuje ogień.
+
+B) BUDOWANIE NA MURACH (WALL-MOUNTED TURRETS):
+   - Możliwość stawiania dedykowanych wieżyczek bezpośrednio na kafelkach z Murem.
+   - Bonusy: Zwiększony zasięg/obrażenia oraz ochrona (wróg musi najpierw zniszczyć Mur, aby uszkodzić wieżyczkę).
+
+--------------------------------------------------------------------------------
+5. HANDEL I SOJUSZE (DWA ODRĘBNE SYSTEMY)
+--------------------------------------------------------------------------------
+1. Pasywne Sojusze (Kontrakty Strumieniowe):
+   - Wymiana surowców/prądu generowanych na sekundę (np. +10 Prądu/s za +5 Ropy/s).
+   - Działa automatycznie do momentu jednostronnego zerwania umowy.
+2. Aktywny Handel (Transakcje Spot / Barter):
+   - Jednorazowa wymiana gromadzonych w magazynie zasobów (np. 200 Kamienia <-> 50 Czerwienitu).
+   - Możliwość handlu "Paczonymi Bateriami" (sprzedaż zgromadzonej energii w zamian za surowce fizyczne).
+================================================================================

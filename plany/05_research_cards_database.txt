@@ -1,0 +1,248 @@
+================================================================================
+          SPECYFIKACJA PROJEKTU: AUTOMATA TECH-WAR (PROTOTYP RTS MVP)
+             CZĘŚĆ 5: BAZA DANYCH 28 UNIKALNYCH KART RESEARCHU (DECK 50)
+================================================================================
+
+--------------------------------------------------------------------------------
+1. ZASADA DRAFTU I WYKLUCZANIA
+--------------------------------------------------------------------------------
+- Gra posiada jedną, uniwersalną pulę (Deck) składającą się z 50 kart na cały mecz.
+- Wyciągnięcie unikalnej karty z puli przez jednego gracza trwale usuwa ją ze zbioru.
+  Inni gracze nie mogą już jej wylosować (chyba że zdobędą ją drogą handlu/podboju).
+
+--------------------------------------------------------------------------------
+2. STRUKTURA DANYCH JSON DLA BAZY KART (cards_database.json)
+--------------------------------------------------------------------------------
+
+[
+  /* --- KARTY ZWYKŁE (COMMON) - X2 KOPIE W PULI --- */
+  {
+    "id": "card_deep_drilling",
+    "name": "Głębokie Wiercenia",
+    "rarity": "COMMON",
+    "copiesInDeck": 2,
+    "description": "Kopalnie Żelaza i Kamienia wydobywają +100% surowca, ale pobierają +50% Prądu.",
+    "effect": { "type": "MINING_RATE_BUFF", "value": 2.0, "powerCostMult": 1.5 }
+  },
+  {
+    "id": "card_supercapacitors",
+    "name": "Superkondensatory",
+    "rarity": "COMMON",
+    "copiesInDeck": 2,
+    "description": "Pojemność Akumulatorów wzrasta o +200%.",
+    "effect": { "type": "BATTERY_CAPACITY_BUFF", "value": 3.0 }
+  },
+  {
+    "id": "card_titanium_fibers",
+    "name": "Włókna Tytanowe",
+    "rarity": "COMMON",
+    "copiesInDeck": 2,
+    "description": "Mury i Pylony zyskują +100% HP i +20% pancerza.",
+    "effect": { "type": "STRUCTURE_HP_BUFF", "target": ["WALL", "PYLON"], "value": 2.0 }
+  },
+  {
+    "id": "card_assembly_line",
+    "name": "Linia Taśmowa",
+    "rarity": "COMMON",
+    "copiesInDeck": 2,
+    "description": "Czas produkcji podstawowych jednostek skrócony o 50%.",
+    "effect": { "type": "PRODUCTION_SPEED_BUFF", "unitTier": 1, "value": 0.5 }
+  },
+  {
+    "id": "card_high_pressure_hydraulics",
+    "name": "Hydraulika Wysokociśnieniowa",
+    "rarity": "COMMON",
+    "copiesInDeck": 2,
+    "description": "Jednostki na Ropę poruszają się o +35% szybciej.",
+    "effect": { "type": "UNIT_SPEED_BUFF", "fuelType": "OIL", "value": 1.35 }
+  },
+  {
+    "id": "card_long_range_relay",
+    "name": "Nadajnik Dalekiego Zasięgu",
+    "rarity": "COMMON",
+    "copiesInDeck": 2,
+    "description": "Zasięg i odległość łączenia Pylonów wzrasta o +50%.",
+    "effect": { "type": "PYLON_RANGE_BUFF", "value": 1.5 }
+  },
+  {
+    "id": "card_military_recycling",
+    "name": "Recykling Wojskowy",
+    "rarity": "COMMON",
+    "copiesInDeck": 2,
+    "description": "Zniszczone jednostki/budynki zwracają 40% surowców.",
+    "effect": { "type": "DEATH_REFUND_BUFF", "value": 0.4 }
+  },
+  {
+    "id": "card_fast_logistics",
+    "name": "Szybka Logistyka",
+    "rarity": "COMMON",
+    "copiesInDeck": 2,
+    "description": "Drony budowlane poruszają się o +100% szybciej i noszą podwójny ładunek.",
+    "effect": { "type": "DRONE_SPEED_CAPACITY_BUFF", "value": 2.0 }
+  },
+  {
+    "id": "card_geoscanner",
+    "name": "Geoskaner",
+    "rarity": "COMMON",
+    "copiesInDeck": 2,
+    "description": "Odkrywa mgłę wojny wokół złóż Ropy i Czerwienitu na całej mapie.",
+    "effect": { "type": "REVEAL_NODES", "targets": ["OIL", "REDSTONE"] }
+  },
+  {
+    "id": "card_self_repair_protocol",
+    "name": "Autonaprawa Struktur",
+    "rarity": "COMMON",
+    "copiesInDeck": 2,
+    "description": "Zasilane budynki regenerują 2% max HP na sekundę.",
+    "effect": { "type": "STRUCTURE_REGEN", "value": 0.02 }
+  },
+
+  /* --- KARTY RZADKIE (RARE) - X1 KOPIA W PULI --- */
+  {
+    "id": "card_magnetic_accelerator",
+    "name": "Młynek Magnetyczny",
+    "rarity": "RARE",
+    "copiesInDeck": 1,
+    "description": "Wieżyczki strzelają 2x szybciej, ale zużywają 2x więcej Żelaza i Prądu.",
+    "effect": { "type": "TURRET_BURST_BUFF", "fireRate": 2.0, "costMult": 2.0 }
+  },
+  {
+    "id": "card_overload_detonation",
+    "name": "Protokół Detonacji",
+    "rarity": "RARE",
+    "copiesInDeck": 1,
+    "description": "Zniszczone Pylony i Mury wybuchają, zadając obrażenia obszarowe.",
+    "effect": { "type": "DEATH_EXPLOSION", "damage": 150, "radius": 100 }
+  },
+  {
+    "id": "card_kinetic_shielding",
+    "name": "Tarcza Kinetyczna",
+    "rarity": "RARE",
+    "copiesInDeck": 1,
+    "description": "Ciężkie jednostki ignorują 30% obrażeń od wieżyczek.",
+    "effect": { "type": "DAMAGE_REDUCTION", "unitType": "HEAVY", "value": 0.3 }
+  },
+  {
+    "id": "card_pulse_amplification",
+    "name": "Impuls EMP",
+    "rarity": "RARE",
+    "copiesInDeck": 1,
+    "description": "Drony EMP paraliżują bazę wroga na 20s i czyszczą ich baterie.",
+    "effect": { "type": "EMP_DURATION_DRAIN_BUFF", "duration": 20 }
+  },
+  {
+    "id": "card_laser_targeter",
+    "name": "Celownik Laserowy",
+    "rarity": "RARE",
+    "copiesInDeck": 1,
+    "description": "Wieże Laserowe zyskują +60% zasięgu i ignorują pancerz.",
+    "effect": { "type": "LASER_TURRET_RANGE_PENETRATION", "rangeMult": 1.6 }
+  },
+  {
+    "id": "card_reverse_engineering",
+    "name": "Inżynieria Rewersyjna",
+    "rarity": "RARE",
+    "copiesInDeck": 1,
+    "description": "Niszczenie jednostek wroga daje +10% ich wartości w Czerwienicie.",
+    "effect": { "type": "KILL_REWARD_REDSTONE", "value": 0.1 }
+  },
+  {
+    "id": "card_wireless_grid",
+    "name": "Bezprzewodowy Przesył",
+    "rarity": "RARE",
+    "copiesInDeck": 1,
+    "description": "Budynki działają bez Pylonów w promieniu 200px od HQ.",
+    "effect": { "type": "WIRELESS_POWER_RADIUS", "radius": 200 }
+  },
+  {
+    "id": "card_orbital_drop",
+    "name": "Satelita Zasobów",
+    "rarity": "RARE",
+    "copiesInDeck": 1,
+    "description": "Co 60 sekund w bazie spada zrzut +100 losowego surowca.",
+    "effect": { "type": "PASSIVE_RESOURCE_DROP", "intervalSeconds": 60, "amount": 100 }
+  },
+  {
+    "id": "card_armor_piercing_rounds",
+    "name": "Amunicja Przebijająca",
+    "rarity": "RARE",
+    "copiesInDeck": 1,
+    "description": "Wieżyczki i Scout Boty zadają +50% obrażeń budynkom.",
+    "effect": { "type": "STRUCTURE_DAMAGE_BUFF", "value": 1.5 }
+  },
+  {
+    "id": "card_giga_assembly",
+    "name": "Giga-Fabryka",
+    "rarity": "RARE",
+    "copiesInDeck": 1,
+    "description": "Fabryki produkują po 2 jednostki jednocześnie w cenie 1.5x surowców.",
+    "effect": { "type": "DOUBLE_PRODUCTION", "costMultiplier": 1.5 }
+  },
+  {
+    "id": "card_energy_leach",
+    "name": "Absorpcja Energii",
+    "rarity": "RARE",
+    "copiesInDeck": 1,
+    "description": "Niszczenie budynków wroga natychmiastowo ładuje Twoje Akumulatory.",
+    "effect": { "type": "KILL_BATTERY_RECHARGE", "value": 1.0 }
+  },
+  {
+    "id": "card_redstone_alchemy",
+    "name": "Synteza Czerwienitu",
+    "rarity": "RARE",
+    "copiesInDeck": 1,
+    "description": "Przetwarza 100 Kamienia na 20 Czerwienitu w laboratorium.",
+    "effect": { "type": "RESOURCE_CONVERSION", "from": "STONE", "to": "REDSTONE", "ratio": 0.2 }
+  },
+
+  /* --- KARTY LEGENDARNE (LEGENDARY) - X1 KOPIA W PULI --- */
+  {
+    "id": "card_cyber_sabotage",
+    "name": "Wirus Trojan",
+    "rarity": "LEGENDARY",
+    "copiesInDeck": 1,
+    "description": "Raz na 3 minuty przejmuje kontrolę nad 1 budynkiem wroga na 30 sekund.",
+    "effect": { "type": "HACK_BUILDING_ABILITY", "cooldownSeconds": 180, "duration": 30 }
+  },
+  {
+    "id": "card_industrial_behemoth",
+    "name": "Tytan Przemysłowy",
+    "rarity": "LEGENDARY",
+    "copiesInDeck": 1,
+    "description": "Odblokowuje produkcję gigantycznego Robota-Tytana (Limit: 1).",
+    "effect": { "type": "UNLOCK_SUPER_UNIT", "unitId": "behemoth_bot" }
+  },
+  {
+    "id": "card_overclock_protocol",
+    "name": "Giga-Storm Protocol",
+    "rarity": "LEGENDARY",
+    "copiesInDeck": 1,
+    "description": "3x szybkostrzelność i darmowa amunicja na 20s. Potem 5s blackoutu.",
+    "effect": { "type": "SUPER_OVERCLOCK", "duration": 20, "debuffDuration": 5 }
+  },
+  {
+    "id": "card_grid_subversion",
+    "name": "Dominacja Sieci",
+    "rarity": "LEGENDARY",
+    "copiesInDeck": 1,
+    "description": "Podłączenie Pylonu do niezasilanego pylonu wroga przejmuje jego budynki.",
+    "effect": { "type": "STEAL_OFFLINE_GRID" }
+  },
+  {
+    "id": "card_hq_bastion",
+    "name": "Pole Siłowe HQ",
+    "rarity": "LEGENDARY",
+    "copiesInDeck": 1,
+    "description": "Kwatera Główna jest niezniszczalna dopóki masz Prąd i naładowaną baterię.",
+    "effect": { "type": "HQ_INVULNERABLE_IF_POWERED" }
+  },
+  {
+    "id": "card_antimatter_core",
+    "name": "Reaktor Antymaterii",
+    "rarity": "LEGENDARY",
+    "copiesInDeck": 1,
+    "description": "Elektrownie dają +500% Prądu bez Czerwienitu, ale wybuchają potężnie po zniszczeniu.",
+    "effect": { "type": "SUPER_POWER_EXPLOSIVE_DEATH", "powerMult": 6.0 }
+  }
+]
+================================================================================

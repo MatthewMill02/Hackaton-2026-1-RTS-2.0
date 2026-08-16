@@ -1,0 +1,40 @@
+================================================================================
+          SPECYFIKACJA PROJEKTU: AUTOMATA TECH-WAR (PROTOTYP RTS MVP)
+             CZĘŚĆ 3: KARTY RESEARCHU, PVE, CRAFTING I BEZPOŚREDNI HANDEL
+================================================================================
+
+--------------------------------------------------------------------------------
+1. SYSTEM KART RESEARCHU (RESEARCH CARDS & GAMBLING)
+--------------------------------------------------------------------------------
+- Mechanika Odkrywania:
+  * Gracz zdobywa zakryte karty, które trafiają do Ekranu Badań.
+  * Interakcja: Kliknięcie zakrytej karty uruchamia animację obrotu (odkrycia awersu) z natychmiastowym przyznaniem natychmiastowego lub pasywnego bonusu.
+- Poziomy Rzadkości Kart:
+  1. Zwykłe (Common): Boosty do ekonomii i produkcji (+20% wydobycia, szybsza produkcja).
+  2. Rzadkie (Rare): Modyfikacje bojowe (Szybkostrzelność wieżyczek x2, dodatkowe obrażenia obszarowe).
+  3. Legendarne (Legendary): Unikalne zdolności i jednostki (np. Wirusy hakujące budynki, czołgi-mamuty, powybuchowe pylony).
+
+--------------------------------------------------------------------------------
+2. SYSTEM PVE I EKSPLORACJA MAPY
+--------------------------------------------------------------------------------
+- Neutralne Obozowiska (Campy):
+  * W wybranych strefach mapy stacjonują wrogie/neutralne grupy robotów oraz wieżyczek.
+  * Zniszczenie Obozu PVE nagradza gracza gwarantowaną Kartą Researchu oraz surowcami.
+- Bossowie Mapy (Giga-Core):
+  * Silnie strzeżone punkty centralne na mapie. Pokonanie bossa przyznaje Kartę Legendarną.
+
+--------------------------------------------------------------------------------
+3. KRAFTING I SYNTEZA KART (END-GAME)
+--------------------------------------------------------------------------------
+- Budynek: Przetwórnia Danych / Laboratorium.
+- Mechanika: Po oczyszczeniu mapy z obozów PVE, gracze mogą zużywać duże ilości surowców (Żelazo + Kamień + Czerwienit), aby wytwarzać (syntezować) nowe, losowe Karty Researchu bezpośrednio w bazie.
+
+--------------------------------------------------------------------------------
+4. PRYWATNY HANDEL I DAROWIZNY (DIRECT TRADE)
+--------------------------------------------------------------------------------
+- Wybór Odbiorcy: Handel może odbywać się na giełdzie ogólnej LUB być kierowany do konkretnego, wybranego gracza.
+- Mechanika Darowizny (Zero-Cost Trade):
+  * Gracz ma możliwość przekazania surowców lub Karty Researchu drugiemu graczowi bez wymagania zapłaty (cena = 0).
+  * Umożliwia to tworzenie tajnych paktów, sponsoring słabszych graczy i manipulację dyplomatyczną.
+- Karty jako Waluta: Karty Researchu są w pełni zbywalne – można nimi płacić za prąd, surowce lub sojusze.
+================================================================================

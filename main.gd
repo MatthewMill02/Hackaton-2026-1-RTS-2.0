@@ -8,6 +8,12 @@ var current_view: Control = null
 var current_phase: GameState.GamePhase = GameState.GamePhase.MENU
 var active_map: MapData = null
 
+# F3 Debug Overlay
+var debug_layer: CanvasLayer = null
+var debug_overlay: PanelContainer = null
+var debug_lbl: Label = null
+var is_debug_visible: bool = false
+
 func _ready() -> void:
 	randomize()
 	
@@ -20,7 +26,10 @@ func _ready() -> void:
 	ui_layer.name = "UILayer"
 	add_child(ui_layer)
 	
-	# 3. Instantiate Network Manager
+	# 3. Setup Top-level F3 Debug Layer
+	_build_debug_overlay()
+	
+	# 4. Instantiate Network Manager
 	network_manager = NetworkManager.new()
 	network_manager.name = "NetworkManager"
 	add_child(network_manager)
@@ -32,15 +41,68 @@ func _ready() -> void:
 	network_manager.match_started.connect(_on_match_started)
 	network_manager.session_disconnected.connect(_on_session_disconnected)
 	network_manager.connection_status_changed.connect(_on_connection_status_changed)
+	network_manager.map_seed_synced.connect(_on_map_seed_synced)
+	network_manager.match_settings_synced.connect(_on_match_settings_synced)
 	
-	# 4. Display Initial Overwatch-style Main Menu
+	# 5. Display Initial Overwatch-style Main Menu
 	show_menu_view()
 
-func _unhandled_input(event: InputEvent) -> void:
-	# Global F11 key for Fullscreen toggle
-	if event is InputEventKey and event.pressed and event.keycode == KEY_F11:
-		settings_manager.toggle_fullscreen()
-		get_viewport().set_input_as_handled()
+func _build_debug_overlay() -> void:
+	debug_layer = CanvasLayer.new()
+	debug_layer.name = "DebugLayer"
+	debug_layer.layer = 125
+	add_child(debug_layer)
+	
+	debug_overlay = PanelContainer.new()
+	debug_overlay.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	debug_overlay.position = Vector2(16, 16)
+	debug_overlay.custom_minimum_size = Vector2(210, 0)
+	debug_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	
+	var sb = UITheme.create_panel_style(Color(0.02, 0.04, 0.07, 0.88), Color(1.0, 0.88, 0.15, 0.95), 4, 1.5, 6)
+	debug_overlay.add_theme_stylebox_override("panel", sb)
+	debug_overlay.visible = false
+	debug_layer.add_child(debug_overlay)
+	
+	var margin = MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 10)
+	margin.add_theme_constant_override("margin_top", 8)
+	margin.add_theme_constant_override("margin_right", 10)
+	margin.add_theme_constant_override("margin_bottom", 8)
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	debug_overlay.add_child(margin)
+	
+	debug_lbl = Label.new()
+	debug_lbl.add_theme_font_size_override("font_size", 13)
+	debug_lbl.add_theme_color_override("font_color", Color(1.0, 0.90, 0.20)) # Yellow text
+	debug_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	margin.add_child(debug_lbl)
+
+func _process(_delta: float) -> void:
+	if is_debug_visible and debug_lbl != null:
+		var fps = Engine.get_frames_per_second()
+		var frame_ms = 1000.0 / maxf(1.0, float(fps))
+		var tps = Engine.physics_ticks_per_second
+		var mem_mb = OS.get_static_memory_usage() / (1024.0 * 1024.0)
+		var draw_calls = Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)
+		
+		debug_lbl.text = "⚡ FPS: %d (%.1f ms)\n⏱️ TPS: %d\n💾 RAM: %.1f MB\n🎨 Draw calls: %d" % [
+			fps, frame_ms, tps, mem_mb, int(draw_calls)
+		]
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo:
+		# F3: Toggle Yellow App Stats (FPS, TPS, RAM)
+		if event.keycode == KEY_F3:
+			is_debug_visible = not is_debug_visible
+			if debug_overlay != null:
+				debug_overlay.visible = is_debug_visible
+			get_viewport().set_input_as_handled()
+			
+		# F11: Toggle Fullscreen
+		elif event.keycode == KEY_F11:
+			settings_manager.toggle_fullscreen()
+			get_viewport().set_input_as_handled()
 
 # ==============================================================================
 # View Switching & Scene Management
@@ -65,8 +127,14 @@ func show_lobby_view(is_host: bool) -> void:
 	_clear_current_view()
 	
 	# Generate new procedural 50x50 map for this lobby
-	if is_host or active_map == null:
+	if is_host:
 		active_map = MapGenerator.generate_map()
+		network_manager.send_map_seed(active_map.seed_value)
+	elif active_map == null:
+		if network_manager.current_map_seed != 0:
+			active_map = MapGenerator.generate_map(network_manager.current_map_seed)
+		else:
+			active_map = MapGenerator.generate_map()
 	
 	var lobby = LobbyView.new(network_manager, settings_manager, active_map)
 	lobby.leave_lobby_requested.connect(_on_leave_lobby_requested)
@@ -74,6 +142,7 @@ func show_lobby_view(is_host: bool) -> void:
 	lobby.slot_selected.connect(_on_slot_selected)
 	lobby.chat_submitted.connect(_on_chat_submitted)
 	lobby.start_game_requested.connect(_on_start_game_requested)
+	lobby.match_settings_changed.connect(_on_match_settings_changed)
 	
 	ui_layer.add_child(lobby)
 	current_view = lobby
@@ -83,6 +152,18 @@ func show_lobby_view(is_host: bool) -> void:
 		is_host,
 		multiplayer.get_unique_id()
 	)
+
+func _on_match_settings_changed(creative: bool, points: int, duration_min: int) -> void:
+	network_manager.send_match_settings(creative, points, duration_min)
+
+func _on_match_settings_synced(creative: bool, points: int, duration_min: int) -> void:
+	if current_view is LobbyView:
+		(current_view as LobbyView).sync_settings_ui(creative, points, duration_min)
+
+func _on_map_seed_synced(seed_val: int) -> void:
+	active_map = MapGenerator.generate_map(seed_val)
+	if current_view is LobbyView:
+		(current_view as LobbyView).set_map_data(active_map)
 
 func show_game_view() -> void:
 	current_phase = GameState.GamePhase.PLAYING

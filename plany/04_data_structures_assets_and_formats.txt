@@ -1,0 +1,55 @@
+================================================================================
+          SPECYFIKACJA PROJEKTU: AUTOMATA TECH-WAR (PROTOTYP RTS MVP)
+             CZĘŚĆ 4: FORMATY DANYCH, ASSETY I STRUKTURA DANYCH JSON
+================================================================================
+
+--------------------------------------------------------------------------------
+1. FORMAT DANYCH I ASSETÓW GRAFICZNYCH
+--------------------------------------------------------------------------------
+- Format Danych: Stosowanie czystych plików JSON do definicji kart, jednostek, budynków oraz struktur map.
+- Grafika (2D Sprites):
+  * Obrazki PNG z przezroczystością (Alpha Channel).
+  * Rozdzielczości standardowe: 64x64px (Małe obiekty/Jednostki), 128x128px (Budynki/Bazy).
+  * Animacje: Pliki PNG w postaci Sprite Sheetów (paski klatek animacji).
+  * Interfejs Kart: Dynamiczne nakładanie tekstu/statystyk z pliku JSON na gotowe ramki PNG.
+
+--------------------------------------------------------------------------------
+2. STRUKTURA DANYCH MAPY (.json / Tiled Export)
+--------------------------------------------------------------------------------
+- Format: JSON zawierający dwuwymiarowe tablice obiektów/kafelków.
+- Zawartość pliku mapy:
+  1. tilemap: Dwuwymiarowa macierz numerów identyfikujących podłoże.
+  2. resources: Tablica obiektów { type: "IRON", x: 12, y: 45, amount: 1000 }.
+  3. pveCamps: Tablica pozycji obozowisk neutralnych i bossów na siatce.
+  4. spawnPoints: 4 zdefiniowane punkty startowe dla Kwater Głównych graczy.
+
+--------------------------------------------------------------------------------
+3. DEFINICJA INTERFEJSÓW TYPÓW (TypeScript Interfaces)
+--------------------------------------------------------------------------------
+A) KARTA RESEARCHU (CardDefinition):
+   - id: string
+   - title: string
+   - description: string
+   - rarity: "COMMON" | "RARE" | "LEGENDARY"
+   - iconPath: string
+   - effect: { type: string, value: number }
+
+B) STRUKTURA/BUDYNEK (BuildingDefinition):
+   - id: string
+   - name: string
+   - maxHp: number
+   - cost: { stone: number, iron: number, oil: number, redstone: number }
+   - powerDrawStandby: number
+   - powerDrawActive: number
+   - ammoCostPerShot: { iron: number }
+   - spritePath: string
+
+C) JEDNOSTKA BOJOWA (UnitDefinition):
+   - id: string
+   - name: string
+   - maxHp: number
+   - movementSpeed: number
+   - attackDamage: number
+   - cost: { iron: number, oil: number, redstone: number }
+   - spritePath: string
+================================================================================

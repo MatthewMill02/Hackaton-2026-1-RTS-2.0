@@ -22,6 +22,7 @@ const COLOR_PRIMARY_HOVER: Color = Color(0.14, 0.28, 0.46, 0.95)
 const COLOR_PRIMARY_PRESSED: Color = Color(0.05, 0.12, 0.22, 0.95)
 
 const COLOR_TEXT_MAIN: Color = Color(0.96, 0.98, 1.0, 1.0)
+const COLOR_TEXT_LIGHT: Color = Color(0.96, 0.98, 1.0, 1.0)
 const COLOR_TEXT_MUTED: Color = Color(0.55, 0.65, 0.78, 1.0)
 
 static func create_panel_style(

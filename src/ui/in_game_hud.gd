@@ -15,12 +15,15 @@ var buildings: BuildingSystem
 var units: UnitManager
 var combat: CombatSystem
 var research: ResearchSystem
+var bot_ai: BotAIController
+var bot_status_vbox: VBoxContainer = null
 
 # Match Stats
 var match_timer_seconds: float = 45 * 60
 var current_score: int = 0
 var target_score: int = 1200
 var is_paused: bool = false
+var is_game_over: bool = false
 var local_slot: int = 0
 
 # UI Labels
@@ -57,7 +60,10 @@ var hover_grid_pos: Vector2i = Vector2i.ZERO
 var in_game_chat_log: RichTextLabel
 var in_game_chat_input: LineEdit
 var active_settings_modal: SettingsModal = null
+var active_production_modal: BuildingProductionModal = null
+var active_lab_modal: LabResearchModal = null
 var scoreboard_overlay: ScoreboardModal = null
+var snapshot_timer: float = 0.0
 
 func _init(p_net: NetworkManager = null, p_settings: SettingsManager = null, p_map: MapData = null) -> void:
 	network_manager = p_net
@@ -76,17 +82,44 @@ func _ready() -> void:
 	# 1. Initialize Subsystems
 	economy = EconomyManager.new()
 	economy.reset_for_match(300)
+	if network_manager != null and network_manager.is_creative:
+		economy.enable_creative_mode()
+		
+	if network_manager != null:
+		target_score = network_manager.match_target_score
+		match_timer_seconds = float(network_manager.match_duration_min * 60)
 	
 	buildings = BuildingSystem.new()
 	units = UnitManager.new()
 	combat = CombatSystem.new()
 	research = ResearchSystem.new()
+	bot_ai = BotAIController.new()
+	if network_manager != null:
+		bot_ai.setup_bots(network_manager.get_players_list())
 	
 	# Connect Combat & Research Signals
 	combat.camp_destroyed.connect(_on_camp_destroyed)
-	research.card_unlocked.connect(_on_card_unlocked)
+	combat.turret_fired.connect(_on_local_turret_fired)
+	combat.unit_killed_reward.connect(_on_unit_killed_reward)
+	units.unit_killed_reward.connect(_on_unit_killed_reward)
+	research.card_obtained.connect(_on_card_obtained)
+	research.card_revealed.connect(_on_card_revealed)
+	research.card_sold.connect(_on_card_sold)
 	
-	# 2. Spawn Starting HQ and Initial Drone
+	# Connect Network Gameplay Synchronization Signals
+	if network_manager != null:
+		network_manager.remote_building_placed.connect(_on_remote_building_placed)
+		network_manager.remote_building_demolished.connect(_on_remote_building_demolished)
+		network_manager.remote_unit_moved.connect(_on_remote_unit_moved)
+		network_manager.remote_unit_gathered.connect(_on_remote_unit_gathered)
+		network_manager.remote_unit_attacked.connect(_on_remote_unit_attacked)
+		network_manager.remote_unit_constructed.connect(_on_remote_unit_constructed)
+		network_manager.remote_unit_spawned.connect(_on_remote_unit_spawned)
+		network_manager.remote_units_snapshot.connect(_on_remote_units_snapshot)
+		network_manager.remote_turret_fired.connect(_on_remote_turret_fired)
+		network_manager.remote_camp_damaged.connect(_on_remote_camp_damaged)
+	
+	# 2. Spawn Starting HQ and Initial Drone (Deterministic IDs)
 	_spawn_starting_entities()
 	
 	# 3. Build HUD UI
@@ -95,12 +128,14 @@ func _ready() -> void:
 
 func _spawn_starting_entities() -> void:
 	for b_spawn in active_map.bases:
-		# Spawn HQ on grid (skip validation — no power grid exists yet)
-		var hq_inst = buildings.place_building("hq", b_spawn.grid_pos, b_spawn.slot, active_map, economy, true)
+		# Spawn HQ on grid with deterministic ID
+		var hq_id = b_spawn.slot * 10000 + 1
+		var hq_inst = buildings.place_building("hq", b_spawn.grid_pos, b_spawn.slot, active_map, economy, true, hq_id)
 		
-		# Spawn starting Worker Drone next to HQ
+		# Spawn starting Worker Drone next to HQ with deterministic ID
 		var spawn_pos = Vector2((b_spawn.grid_pos.x + 2.0) * TILE_PX, (b_spawn.grid_pos.y + 2.0) * TILE_PX)
-		var drone = units.spawn_unit("worker_drone", b_spawn.slot, spawn_pos)
+		var drone_id = b_spawn.slot * 10000 + 1
+		var drone = units.spawn_unit("worker_drone", b_spawn.slot, spawn_pos, drone_id)
 		if b_spawn.slot == local_slot and drone != null:
 			drone.selected = true
 
@@ -145,6 +180,12 @@ func _input(event: InputEvent) -> void:
 					active_placing_def_id = ""
 					is_demolish_mode = false
 					map_viewport.queue_redraw()
+				elif active_production_modal != null and is_instance_valid(active_production_modal):
+					active_production_modal.queue_free()
+					active_production_modal = null
+				elif active_lab_modal != null and is_instance_valid(active_lab_modal):
+					active_lab_modal.queue_free()
+					active_lab_modal = null
 				else:
 					_toggle_esc_settings_modal()
 				get_viewport().set_input_as_handled()
@@ -158,10 +199,27 @@ func _process(delta: float) -> void:
 			match_timer_seconds -= delta
 			_update_timer_display()
 			
-		# Subsystem update loop
-		economy.update_grid(delta, buildings.building_instances)
-		units.update_units(delta, active_map, buildings.building_instances, economy, TILE_PX)
-		combat.update_combat(delta, buildings.building_instances, units.units, active_map, economy, TILE_PX)
+		# Subsystem update loop strictly filtering local slot for private economy
+		buildings.update_timers(delta, local_slot, research)
+		economy.update_grid(delta, buildings.building_instances, local_slot, research)
+		units.update_units(delta, active_map, buildings.building_instances, economy, TILE_PX, local_slot, research)
+		combat.update_combat(delta, buildings.building_instances, units.units, active_map, economy, TILE_PX, local_slot, research)
+		
+		# Bot AI Update (Host / Server / Offline authority)
+		if bot_ai != null and (network_manager == null or network_manager.is_host):
+			bot_ai.update(delta, active_map, buildings, units, TILE_PX)
+			
+		_update_bot_status_ui()
+		
+		# Periodic units snapshot sync (5 Hz heartbeat)
+		if network_manager != null:
+			snapshot_timer += delta
+			if snapshot_timer >= 0.2:
+				snapshot_timer = 0.0
+				var snap = units.get_units_snapshot(local_slot)
+				if not snap.is_empty():
+					network_manager.send_units_snapshot(local_slot, snap)
+		
 		_update_resource_labels()
 		_update_selected_units_ui()
 		if map_viewport: map_viewport.queue_redraw()
@@ -317,17 +375,19 @@ func _build_left_construction_panel() -> void:
 	build_panel.add_child(bvbox)
 	
 	var building_list = [
-		{"id": "stone_mine", "name": "Kopalnia Kamienia"},
-		{"id": "iron_mine", "name": "Kopalnia Żelaza"},
-		{"id": "pylon", "name": "Pylon"},
-		{"id": "factory", "name": "Fabryka"},
-		{"id": "storage", "name": "Magazyn"},
-		{"id": "wall", "name": "Mur"},
-		{"id": "turret", "name": "Wieżyczka"},
-		{"id": "power_plant", "name": "Elektrownia"},
-		{"id": "battery", "name": "Bank Energii"},
-		{"id": "lab", "name": "Przetwórnia Danych"},
-		{"id": "DEMOLISH", "name": "Zniszcz budynek"}
+		{"id": "stone_mine", "name": "🪨 Kopalnia Kamienia"},
+		{"id": "iron_mine", "name": "⚙️ Kopalnia Żelaza"},
+		{"id": "oil_pump", "name": "🛢️ Pompa Ropy"},
+		{"id": "redstone_mine", "name": "🔴 Kopalnia Czerwienitu"},
+		{"id": "pylon", "name": "⚡ Pylon Zasilania"},
+		{"id": "power_plant", "name": "🏭 Elektrownia"},
+		{"id": "battery", "name": "🔋 Bank Energii"},
+		{"id": "factory", "name": "🏗️ Fabryka"},
+		{"id": "storage", "name": "📦 Magazyn"},
+		{"id": "wall", "name": "🧱 Mur Obronny"},
+		{"id": "turret", "name": "🎯 Wieżyczka Laserowa"},
+		{"id": "lab", "name": "🔬 Przetwórnia Danych"},
+		{"id": "DEMOLISH", "name": "💥 Zniszcz budynek"}
 	]
 	
 	for item in building_list:
@@ -395,6 +455,20 @@ func _build_in_game_chat_overlay() -> void:
 	add_child(hint_lbl)
 
 func _build_minimap_box() -> void:
+	# Bot Status Overlay (above minimap)
+	var bot_status_panel = PanelContainer.new()
+	bot_status_panel.set_anchors_preset(PRESET_BOTTOM_RIGHT)
+	bot_status_panel.position = Vector2(-220, -320)
+	bot_status_panel.custom_minimum_size = Vector2(204, 0)
+	var sb_bot = UITheme.create_panel_style(Color(0.02, 0.04, 0.08, 0.90), Color(0.15, 0.28, 0.44, 0.6), 4, 1, 6)
+	bot_status_panel.add_theme_stylebox_override("panel", sb_bot)
+	add_child(bot_status_panel)
+	
+	bot_status_vbox = VBoxContainer.new()
+	bot_status_vbox.add_theme_constant_override("separation", 3)
+	bot_status_panel.add_child(bot_status_vbox)
+	
+	# Minimap Panel
 	var minimap_panel = PanelContainer.new()
 	minimap_panel.set_anchors_preset(PRESET_BOTTOM_RIGHT)
 	minimap_panel.position = Vector2(-200, -210)
@@ -409,6 +483,32 @@ func _build_minimap_box() -> void:
 	minimap_canvas.draw.connect(_on_minimap_draw)
 	minimap_canvas.gui_input.connect(_on_minimap_gui_input)
 	minimap_panel.add_child(minimap_canvas)
+
+func _update_bot_status_ui() -> void:
+	if bot_status_vbox == null or bot_ai == null: return
+	
+	for c in bot_status_vbox.get_children():
+		c.queue_free()
+		
+	if bot_ai.active_bots.is_empty():
+		bot_status_vbox.get_parent().visible = false
+		return
+		
+	bot_status_vbox.get_parent().visible = true
+	
+	var hdr = Label.new()
+	hdr.text = "🤖 STATUS BOTÓW:"
+	hdr.add_theme_font_size_override("font_size", 10)
+	hdr.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
+	bot_status_vbox.add_child(hdr)
+	
+	for b in bot_ai.active_bots:
+		var slot_col = GameState.SLOT_COLORS[b.slot] if b.slot < GameState.SLOT_COLORS.size() else UITheme.COLOR_TEXT_LIGHT
+		var lbl = Label.new()
+		lbl.text = "• %s: %s" % [b.data.name, b.current_status]
+		lbl.add_theme_font_size_override("font_size", 9)
+		lbl.add_theme_color_override("font_color", slot_col)
+		bot_status_vbox.add_child(lbl)
 
 func _on_minimap_draw() -> void:
 	if minimap_canvas == null or active_map == null: return
@@ -573,6 +673,10 @@ func _update_selected_units_ui() -> void:
 		# Status row
 		var status_text = "💤 Oczekiwanie"
 		match u.state:
+			UnitManager.UnitState.CONSTRUCTING:
+				var b_name = u.target_building.name if u.target_building != null else "budynek"
+				var b_pct = int(u.target_building.build_progress * 100.0) if u.target_building != null else 0
+				status_text = "🔨 Buduje: %s (%d%%)" % [b_name, b_pct]
 			UnitManager.UnitState.MINING:
 				var res_name = "Kamień"
 				if u.target_resource:
@@ -580,7 +684,7 @@ func _update_selected_units_ui() -> void:
 						MapData.ResourceType.STONE: res_name = "🪨 Kamień"
 						MapData.ResourceType.IRON: res_name = "⚙️ Żelazo"
 						MapData.ResourceType.OIL: res_name = "🛢️ Ropa"
-						MapData.ResourceType.REDSTONE: res_name = "🔴 Redstone"
+						MapData.ResourceType.REDSTONE: res_name = "🔴 Czerwienit"
 				status_text = "⛏️ Wydobywa %s (%d/%d)" % [res_name, u.carried_amount, u.max_carry]
 			UnitManager.UnitState.RETURNING_TO_HQ:
 				var res_name = "Surowiec"
@@ -588,7 +692,7 @@ func _update_selected_units_ui() -> void:
 					MapData.ResourceType.STONE: res_name = "🪨 Kamień"
 					MapData.ResourceType.IRON: res_name = "⚙️ Żelazo"
 					MapData.ResourceType.OIL: res_name = "🛢️ Ropa"
-					MapData.ResourceType.REDSTONE: res_name = "🔴 Redstone"
+					MapData.ResourceType.REDSTONE: res_name = "🔴 Czerwienit"
 				status_text = "🚚 Transport %s (%d) -> Baza" % [res_name, u.carried_amount]
 			UnitManager.UnitState.MOVING, UnitManager.UnitState.MOVING_TO_RESOURCE:
 				status_text = "🏃 Ruch do celu"
@@ -598,7 +702,10 @@ func _update_selected_units_ui() -> void:
 		var stat_lbl = Label.new()
 		stat_lbl.text = status_text
 		stat_lbl.add_theme_font_size_override("font_size", 12)
-		stat_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+		if u.state == UnitManager.UnitState.CONSTRUCTING:
+			stat_lbl.add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD)
+		else:
+			stat_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
 		cvbox.add_child(stat_lbl)
 		
 		selected_units_vbox.add_child(card)
@@ -687,22 +794,85 @@ func _on_map_draw() -> void:
 		map_viewport.draw_rect(r_rect, r_col, false, 1.5)
 		map_viewport.draw_circle(r_rect.get_center(), tile_sz * 0.3, r_col)
 
+	# 4.5 High-Voltage Electric Power Transmission Lines (Linie wysokiego napięcia)
+	var power_emitters = buildings.building_instances.filter(func(b): 
+		return (b.def_id in ["hq", "pylon", "power_plant"]) and b.build_progress >= 1.0
+	)
+	for i in range(power_emitters.size()):
+		var b1 = power_emitters[i]
+		var c1 = origin + (Vector2(b1.grid_pos) + Vector2(b1.size) * 0.5) * tile_sz
+		var r1 = BuildingSystem.POWER_GRID_HQ_RADIUS if b1.def_id == "hq" else BuildingSystem.POWER_GRID_PYLON_RADIUS
+		if b1.def_id == "power_plant": r1 = 4
+		
+		for j in range(i + 1, power_emitters.size()):
+			var b2 = power_emitters[j]
+			if b1.slot != b2.slot: continue
+			
+			var r2 = BuildingSystem.POWER_GRID_HQ_RADIUS if b2.def_id == "hq" else BuildingSystem.POWER_GRID_PYLON_RADIUS
+			if b2.def_id == "power_plant": r2 = 4
+			
+			var tile_dist = (Vector2(b1.grid_pos) + Vector2(b1.size) * 0.5).distance_to(Vector2(b2.grid_pos) + Vector2(b2.size) * 0.5)
+			var max_connect_dist = float(r1 + r2 + 2.0)
+			
+			if tile_dist <= max_connect_dist:
+				var c2 = origin + (Vector2(b2.grid_pos) + Vector2(b2.size) * 0.5) * tile_sz
+				var slot_col = GameState.SLOT_COLORS[b1.slot] if b1.slot < GameState.SLOT_COLORS.size() else UITheme.COLOR_ACCENT_CYAN
+				
+				# Electric Glow halo
+				map_viewport.draw_line(c1, c2, Color(slot_col.r, slot_col.g, slot_col.b, 0.25), 6.0 * map_zoom)
+				# Main cable sheath
+				map_viewport.draw_line(c1, c2, Color(0.04, 0.10, 0.18, 0.90), 3.0 * map_zoom)
+				# High-voltage energetic core line
+				map_viewport.draw_line(c1, c2, Color(slot_col.r, slot_col.g, slot_col.b, 0.95), 1.5 * map_zoom)
+				
+				# Insulator terminal nodes
+				map_viewport.draw_circle(c1, 4.0 * map_zoom, Color(slot_col.r, slot_col.g, slot_col.b, 0.8))
+				map_viewport.draw_circle(c2, 4.0 * map_zoom, Color(slot_col.r, slot_col.g, slot_col.b, 0.8))
+
 	# 5. Buildings
 	for b in buildings.building_instances:
 		var b_pos = origin + Vector2(b.grid_pos.x * tile_sz, b.grid_pos.y * tile_sz)
 		var b_box = Rect2(b_pos, Vector2(b.size.x * tile_sz, b.size.y * tile_sz))
+		var is_ghost = (b.build_progress < 1.0)
+		var modulate_col = Color(1.0, 1.0, 1.0, 0.45) if is_ghost else Color.WHITE
 		
 		if b.sprite_texture != null:
-			map_viewport.draw_texture_rect(b.sprite_texture, b_box, false)
+			if is_ghost:
+				map_viewport.draw_texture_rect(b.sprite_texture, b_box, false, modulate_col)
+			else:
+				map_viewport.draw_texture_rect(b.sprite_texture, b_box, false)
 		else:
-			map_viewport.draw_rect(b_box, Color(0.12, 0.28, 0.44, 0.9), true)
+			var fill_c = Color(0.12, 0.28, 0.44, 0.45) if is_ghost else Color(0.12, 0.28, 0.44, 0.9)
+			map_viewport.draw_rect(b_box, fill_c, true)
 			map_viewport.draw_rect(b_box, UITheme.COLOR_ACCENT_CYAN, false, 1.5)
 			
 		var slot_col = GameState.SLOT_COLORS[b.slot] if b.slot < GameState.SLOT_COLORS.size() else Color.WHITE
-		map_viewport.draw_rect(b_box, slot_col, false, 1.5)
+		var border_alpha = 0.5 if is_ghost else 1.0
+		map_viewport.draw_rect(b_box, Color(slot_col.r, slot_col.g, slot_col.b, border_alpha), false, 1.5)
+		
+		# Draw construction blueprint progress bar above building if unbuilt
+		if is_ghost:
+			var bar_w = maxf(44.0 * map_zoom, b_box.size.x * 0.8)
+			var bar_h = 6.0 * map_zoom
+			var bar_pos = Vector2(b_box.get_center().x - bar_w * 0.5, b_box.position.y - 14.0 * map_zoom)
+			var bg_rect = Rect2(bar_pos, Vector2(bar_w, bar_h))
+			map_viewport.draw_rect(bg_rect, Color(0.05, 0.08, 0.12, 0.9), true)
+			map_viewport.draw_rect(bg_rect, Color(0.2, 0.4, 0.6, 0.8), false, 1.0)
+			var fill_w = bar_w * clampf(b.build_progress, 0.0, 1.0)
+			if fill_w > 0:
+				map_viewport.draw_rect(Rect2(bar_pos, Vector2(fill_w, bar_h)), UITheme.COLOR_ACCENT_CYAN, true)
+			var pct_txt = "%d%%" % int(b.build_progress * 100.0)
+			map_viewport.draw_string(ThemeDB.fallback_font, bar_pos + Vector2(bar_w * 0.5 - 12, -3), pct_txt, HORIZONTAL_ALIGNMENT_CENTER, -1, 11, UITheme.COLOR_ACCENT_CYAN)
+		
+		# Draw EMP Overload indicator if building is overloaded
+		if b.emp_overload_timer > 0.0:
+			map_viewport.draw_rect(b_box, Color(0.15, 0.45, 0.95, 0.30), true)
+			map_viewport.draw_rect(b_box, Color(0.35, 0.75, 1.0, 0.90), false, 2.0)
+			var ov_txt = "⚡ EMP (%ds)" % int(ceil(b.emp_overload_timer))
+			map_viewport.draw_string(ThemeDB.fallback_font, b_pos + Vector2(0, -4 * map_zoom), ov_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.4, 0.8, 1.0))
 		
 		# Draw Power Grid coverage for Pylons and HQ (tile-based with corner cuts)
-		if b.def_id in ["hq", "pylon"]:
+		if b.def_id in ["hq", "pylon"] and b.build_progress >= 1.0:
 			var radius = BuildingSystem.POWER_GRID_HQ_RADIUS if b.def_id == "hq" else BuildingSystem.POWER_GRID_PYLON_RADIUS
 			var b_center_tile = b.grid_pos + Vector2i(1, 1) if b.def_id == "hq" else b.grid_pos
 			var power_tiles = BuildingSystem.get_powered_tiles(b_center_tile, radius)
@@ -715,7 +885,6 @@ func _on_map_draw() -> void:
 			# Draw border outline of the power area
 			for pt in power_tiles:
 				var pt_v = Vector2i(pt.x, pt.y)
-				# Check each edge — if neighbor is not powered, draw edge
 				for edge_data in [
 					[Vector2i(0, -1), Vector2(0, 0), Vector2(1, 0)],  # top
 					[Vector2i(0, 1), Vector2(0, 1), Vector2(1, 1)],   # bottom
@@ -781,6 +950,36 @@ func _on_map_draw() -> void:
 			elif not can_buy:
 				map_viewport.draw_string(ThemeDB.fallback_font, p_world + Vector2(0, -10), "Brak surowców!", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, UITheme.COLOR_ACCENT_RED)
 
+	# 8b. Demolish Mode Ghost Cross (X) Preview
+	if is_demolish_mode:
+		var hovered_dem_b = buildings.get_building_at(hover_grid_pos)
+		var dem_rect: Rect2
+		var can_demolish = false
+		if hovered_dem_b != null and hovered_dem_b.slot == local_slot and hovered_dem_b.def_id != "hq":
+			can_demolish = true
+			var b_world = origin + Vector2(hovered_dem_b.grid_pos.x * tile_sz, hovered_dem_b.grid_pos.y * tile_sz)
+			dem_rect = Rect2(b_world, Vector2(hovered_dem_b.size.x * tile_sz, hovered_dem_b.size.y * tile_sz))
+		else:
+			var t_world = origin + Vector2(hover_grid_pos.x * tile_sz, hover_grid_pos.y * tile_sz)
+			dem_rect = Rect2(t_world, Vector2(tile_sz, tile_sz))
+			
+		var fill_col = Color(0.9, 0.1, 0.1, 0.35) if can_demolish else Color(0.8, 0.2, 0.2, 0.18)
+		var border_col = UITheme.COLOR_ACCENT_RED if can_demolish else Color(0.8, 0.2, 0.2, 0.6)
+		
+		map_viewport.draw_rect(dem_rect, fill_col, true)
+		map_viewport.draw_rect(dem_rect, border_col, false, 2.0)
+		
+		# Draw diagonal X cross
+		map_viewport.draw_line(dem_rect.position, dem_rect.position + dem_rect.size, border_col, 3.0)
+		map_viewport.draw_line(Vector2(dem_rect.position.x + dem_rect.size.x, dem_rect.position.y), Vector2(dem_rect.position.x, dem_rect.position.y + dem_rect.size.y), border_col, 3.0)
+		
+		if can_demolish and hovered_dem_b != null:
+			map_viewport.draw_string(ThemeDB.fallback_font, dem_rect.position + Vector2(0, -10), "Zniszcz: %s (+50%% zwrotu)" % hovered_dem_b.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, UITheme.COLOR_ACCENT_RED)
+		elif hovered_dem_b != null and hovered_dem_b.def_id == "hq":
+			map_viewport.draw_string(ThemeDB.fallback_font, dem_rect.position + Vector2(0, -10), "Nie można zniszczyć Kwatery Głównej!", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, UITheme.COLOR_ACCENT_RED)
+		else:
+			map_viewport.draw_string(ThemeDB.fallback_font, dem_rect.position + Vector2(0, -10), "Wskaż budynek do wyburzenia", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, UITheme.COLOR_TEXT_MUTED)
+
 	# 9. Box Selection Marquee (Windows desktop style)
 	if is_box_selecting:
 		var min_x = minf(box_select_start.x, box_select_current.x)
@@ -790,6 +989,113 @@ func _on_map_draw() -> void:
 		var sel_rect = Rect2(min_x, min_y, max_x - min_x, max_y - min_y)
 		map_viewport.draw_rect(sel_rect, Color(0.15, 0.55, 0.95, 0.18), true)
 		map_viewport.draw_rect(sel_rect, Color(0.35, 0.85, 1.0, 0.90), false, 1.5)
+
+	# 10. Dynamic Hover Tooltip (Etykieta)
+	_draw_hover_tooltip(hover_grid_pos, tile_sz, origin)
+
+func _draw_hover_tooltip(grid_pos: Vector2i, tile_sz: float, origin: Vector2) -> void:
+	if not active_placing_def_id.is_empty() or is_demolish_mode or is_box_selecting:
+		return
+		
+	var hovered_b = buildings.get_building_at(grid_pos)
+	var hovered_res: MapData.ResourceNode = null
+	if hovered_b == null:
+		for r in active_map.resources:
+			if r.grid_pos == grid_pos and r.amount > 0:
+				hovered_res = r
+				break
+				
+	if hovered_b == null and hovered_res == null:
+		return
+		
+	var mouse_screen = origin + Vector2((grid_pos.x + 1) * tile_sz, grid_pos.y * tile_sz) + Vector2(16, 16)
+	var vp_rect = map_viewport.get_rect()
+	
+	if hovered_b != null:
+		var panel_w = 240.0
+		var panel_h = 135.0
+		if mouse_screen.x + panel_w > vp_rect.size.x - 20:
+			mouse_screen.x = origin.x + grid_pos.x * tile_sz - panel_w - 16
+		if mouse_screen.y + panel_h > vp_rect.size.y - 20:
+			mouse_screen.y = vp_rect.size.y - panel_h - 20
+			
+		var t_rect = Rect2(mouse_screen, Vector2(panel_w, panel_h))
+		map_viewport.draw_rect(t_rect, Color(0.02, 0.04, 0.08, 0.94), true)
+		map_viewport.draw_rect(t_rect, UITheme.COLOR_ACCENT_CYAN, false, 1.5)
+		
+		# Title
+		var slot_name = "Gracz %d" % (hovered_b.slot + 1)
+		map_viewport.draw_string(ThemeDB.fallback_font, mouse_screen + Vector2(12, 22), hovered_b.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, UITheme.COLOR_ACCENT_CYAN)
+		map_viewport.draw_string(ThemeDB.fallback_font, mouse_screen + Vector2(12, 40), "Właściciel: %s" % slot_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UITheme.COLOR_TEXT_MUTED)
+		
+		# Health Bar
+		var hp_str = "HP: %d / %d" % [hovered_b.hp, hovered_b.max_hp]
+		map_viewport.draw_string(ThemeDB.fallback_font, mouse_screen + Vector2(12, 58), hp_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
+		_draw_health_bar(mouse_screen + Vector2(panel_w * 0.5, 68), hovered_b.hp, hovered_b.max_hp, panel_w - 24.0)
+		
+		# Build status / Power Status
+		var is_built = (hovered_b.build_progress >= 1.0)
+		if not is_built:
+			var p_txt = "🔨 Budowa: %d%%" % int(hovered_b.build_progress * 100.0)
+			map_viewport.draw_string(ThemeDB.fallback_font, mouse_screen + Vector2(12, 92), p_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, UITheme.COLOR_WARNING_GOLD)
+			map_viewport.draw_string(ThemeDB.fallback_font, mouse_screen + Vector2(12, 112), "(PPM dronem, aby budować)", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UITheme.COLOR_ACCENT_CYAN)
+		else:
+			var is_powered = BuildingSystem.is_tile_powered(hovered_b.grid_pos, buildings.building_instances, hovered_b.slot)
+			if hovered_b.slot == local_slot and economy.is_blackout:
+				is_powered = false
+				
+			var pwr_str = "⚡ ZASILANY" if is_powered else "⚠️ BRAK PRĄDU"
+			var pwr_col = UITheme.COLOR_SUCCESS_GREEN if is_powered else UITheme.COLOR_ACCENT_RED
+			map_viewport.draw_string(ThemeDB.fallback_font, mouse_screen + Vector2(12, 92), pwr_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, pwr_col)
+			
+			# Dynamic Production / Power Draw stats
+			var stat_str = ""
+			match hovered_b.def_id:
+				"hq": stat_str = "Zasilanie: +50 kW · Pojemność: +1000 kJ"
+				"power_plant": stat_str = "Zasilanie: +100 kW"
+				"pylon": stat_str = "Zasięg: 3 kratki · Pobór: -1 kW"
+				"battery": stat_str = "Pojemność: +500 kJ"
+				"stone_mine": stat_str = "Wydobycie: +8 Kamień/s · Pobór: -5 kW"
+				"iron_mine": stat_str = "Wydobycie: +6 Żelazo/s · Pobór: -8 kW"
+				"oil_pump": stat_str = "Wydobycie: +4 Ropa/s · Pobór: -10 kW"
+				"redstone_mine": stat_str = "Wydobycie: +3 Czerwienit/s · Pobór: -12 kW"
+				"storage": stat_str = "Magazyn: +500 jedn."
+				"turret", "wall_turret": stat_str = "Obrona laserowa (6 kr.) · Pobór: -2 kW"
+				_: stat_str = "Struktura operacyjna"
+				
+			map_viewport.draw_string(ThemeDB.fallback_font, mouse_screen + Vector2(12, 112), stat_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UITheme.COLOR_TEXT_MUTED)
+
+	elif hovered_res != null:
+		var panel_w = 210.0
+		var panel_h = 80.0
+		if mouse_screen.x + panel_w > vp_rect.size.x - 20:
+			mouse_screen.x = origin.x + grid_pos.x * tile_sz - panel_w - 16
+		if mouse_screen.y + panel_h > vp_rect.size.y - 20:
+			mouse_screen.y = vp_rect.size.y - panel_h - 20
+			
+		var t_rect = Rect2(mouse_screen, Vector2(panel_w, panel_h))
+		map_viewport.draw_rect(t_rect, Color(0.02, 0.04, 0.08, 0.94), true)
+		map_viewport.draw_rect(t_rect, UITheme.COLOR_WARNING_GOLD, false, 1.5)
+		
+		var r_name = "Złoże Surowca"
+		var req_b = "Kopalnia"
+		match hovered_res.type:
+			MapData.ResourceType.STONE:
+				r_name = "🪨 Złoże Kamienia"
+				req_b = "Wymaga: Kopalnia Kamienia"
+			MapData.ResourceType.IRON:
+				r_name = "⚙️ Złoże Żelaza"
+				req_b = "Wymaga: Kopalnia Żelaza"
+			MapData.ResourceType.OIL:
+				r_name = "🛢️ Źródło Ropy"
+				req_b = "Wymaga: Pompa Ropy"
+			MapData.ResourceType.REDSTONE:
+				r_name = "🔴 Złoże Czerwienitu"
+				req_b = "Wymaga: Kopalnia Czerwienitu"
+				
+		map_viewport.draw_string(ThemeDB.fallback_font, mouse_screen + Vector2(12, 24), r_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, UITheme.COLOR_WARNING_GOLD)
+		map_viewport.draw_string(ThemeDB.fallback_font, mouse_screen + Vector2(12, 46), "Pozostałe złoże: %d szt." % hovered_res.amount, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color.WHITE)
+		map_viewport.draw_string(ThemeDB.fallback_font, mouse_screen + Vector2(12, 66), req_b, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UITheme.COLOR_TEXT_MUTED)
 
 func _draw_health_bar(center_pos: Vector2, hp: int, max_hp: int, bar_width: float) -> void:
 	var bar_h = 5.0
@@ -827,18 +1133,24 @@ func _on_map_gui_input(event: InputEvent) -> void:
 		elif event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
 				if not active_placing_def_id.is_empty():
-					# Attempt building placement
+					# Attempt building placement (keeps tool active for continuous building)
 					var placed = buildings.place_building(active_placing_def_id, hover_grid_pos, local_slot, active_map, economy)
 					if placed != null:
-						in_game_chat_log.append_text("[color=#00f0ff]Postawiono: [b]%s[/b][/color]\n" % placed.name)
-						active_placing_def_id = "" # Reset
+						var pts = _get_building_score_points(placed.def_id)
+						_add_score(pts, "Postawiono: %s (+%d pkt)" % [placed.name, pts])
+						in_game_chat_log.append_text("[color=#00f0ff]Postawiono: [b]%s[/b] (+%d pkt do zwycięstwa)[/color]\n" % [placed.name, pts])
+						if network_manager != null:
+							network_manager.send_place_building(placed.def_id, hover_grid_pos, local_slot, placed.instance_id)
 						map_viewport.queue_redraw()
+						if minimap_canvas: minimap_canvas.queue_redraw()
 				elif is_demolish_mode:
-					# Attempt demolition
+					# Attempt demolition (continuous mode: stays active until right-click/ESC)
 					if buildings.demolish_building_at(hover_grid_pos, local_slot, economy):
 						in_game_chat_log.append_text("[color=#ff4655]Zniszczono budynek (Zwrócono 50% surowców)[/color]\n")
-						is_demolish_mode = false
+						if network_manager != null:
+							network_manager.send_demolish_building(hover_grid_pos, local_slot)
 						map_viewport.queue_redraw()
+						if minimap_canvas: minimap_canvas.queue_redraw()
 				else:
 					# Start box selection
 					is_box_selecting = true
@@ -854,8 +1166,23 @@ func _on_map_gui_input(event: InputEvent) -> void:
 					var box_h = absf(box_select_current.y - box_select_start.y)
 					
 					if box_w < 8.0 and box_h < 8.0:
-						# Single-click selection
+						# Single-click interaction
 						var click_world = (event.position - map_camera_pos) / map_zoom
+						var click_tile = Vector2i(int(floor(click_world.x / TILE_PX)), int(floor(click_world.y / TILE_PX)))
+						
+						# Check if clicked own building (HQ, Factory, or Lab)
+						var clicked_b = buildings.get_building_at(click_tile)
+						if clicked_b != null and clicked_b.slot == local_slot and clicked_b.build_progress >= 1.0:
+							if clicked_b.def_id == "hq" or clicked_b.def_id == "factory":
+								_open_building_production_modal(clicked_b)
+								map_viewport.queue_redraw()
+								return
+							elif clicked_b.def_id == "lab":
+								_open_lab_research_modal(clicked_b)
+								map_viewport.queue_redraw()
+								return
+							
+						# Single-click unit selection
 						var closest_u = null
 						var min_d = 32.0
 						for u in units.units:
@@ -898,7 +1225,27 @@ func _on_map_gui_input(event: InputEvent) -> void:
 			var selected_units = units.units.filter(func(u): return u.slot == local_slot and u.selected)
 			if selected_units.is_empty(): return
 			
-			# Check if clicked resource node
+			# 0. Check if clicked an enemy building to attack / EMP
+			var target_enemy_b = buildings.get_building_at(clicked_tile)
+			if target_enemy_b != null and target_enemy_b.slot != local_slot and target_enemy_b.hp > 0:
+				units.command_attack_building(selected_units, target_enemy_b)
+				in_game_chat_log.append_text("[color=#ff9f1c]Wydano rozkaz ataku na budynek wroga: [b]%s[/b]![/color]\n" % target_enemy_b.name)
+				map_viewport.queue_redraw()
+				return
+
+			# 1. Check if clicked an unbuilt/ghost building to construct
+			var target_b = buildings.get_building_at(clicked_tile)
+			if target_b != null and target_b.slot == local_slot and target_b.build_progress < 1.0:
+				units.command_construct(selected_units, target_b)
+				in_game_chat_log.append_text("[color=#00f0ff]Dron skierowany do budowy: [b]%s[/b][/color]\n" % target_b.name)
+				if network_manager != null:
+					var u_ids: Array = []
+					for u in selected_units: u_ids.append(u.instance_id)
+					network_manager.send_unit_construct(u_ids, target_b.instance_id)
+				map_viewport.queue_redraw()
+				return
+
+			# 2. Check if clicked resource node (for combat / other units if any)
 			var target_res: MapData.ResourceNode = null
 			for r in active_map.resources:
 				if r.grid_pos == clicked_tile and r.amount > 0:
@@ -906,11 +1253,11 @@ func _on_map_gui_input(event: InputEvent) -> void:
 					break
 					
 			if target_res != null:
-				units.command_gather(selected_units, target_res)
-				in_game_chat_log.append_text("[color=#2ec4b6]Dron wysłany do wydobycia surowca.[/color]\n")
+				in_game_chat_log.append_text("[color=#ffd166]Postaw odpowiednią kopalnię na tym złożu, aby wydobywać surowiec.[/color]\n")
+				map_viewport.queue_redraw()
 				return
 				
-			# Check if clicked enemy camp
+			# 3. Check if clicked enemy camp
 			var target_camp: MapData.CampNode = null
 			for c in active_map.camps:
 				if c.hp > 0 and (c.grid_pos - clicked_tile).length() <= 1:
@@ -920,10 +1267,19 @@ func _on_map_gui_input(event: InputEvent) -> void:
 			if target_camp != null:
 				units.command_attack_camp(selected_units, target_camp)
 				in_game_chat_log.append_text("[color=#ff9f1c]Wydano rozkaz ataku na obóz/bossa![/color]\n")
+				if network_manager != null:
+					var u_ids: Array = []
+					for u in selected_units: u_ids.append(u.instance_id)
+					network_manager.send_unit_attack(u_ids, target_camp.grid_pos)
+				map_viewport.queue_redraw()
 				return
 				
-			# Standard move command
+			# 4. Standard move command
 			units.command_move(selected_units, click_world)
+			if network_manager != null:
+				var u_ids: Array = []
+				for u in selected_units: u_ids.append(u.instance_id)
+				network_manager.send_unit_move(u_ids, click_world)
 			map_viewport.queue_redraw()
 			
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
@@ -948,24 +1304,13 @@ func _on_build_selected(def_id: String) -> void:
 	if def_id == "DEMOLISH":
 		is_demolish_mode = true
 		active_placing_def_id = ""
-		in_game_chat_log.append_text("[color=#ff4655]Tryb wyburzania: Kliknij własny budynek, aby go zniszczyć.[/color]\n")
+		in_game_chat_log.append_text("[color=#ff4655]Tryb wyburzania: Klikaj kolejne budynki, aby je niszczyć (PPM lub ESC anuluje).[/color]\n")
 	else:
 		active_placing_def_id = def_id
 		is_demolish_mode = false
 		var def = buildings.get_def(def_id)
 		if def != null:
-			in_game_chat_log.append_text("[color=#00f0ff]Tryb budowy: [b]%s[/b] (Wskaż wolne pole w zasięgu zasilania)[/color]\n" % def.name)
-
-func _on_camp_destroyed(camp: MapData.CampNode, killer_slot: int) -> void:
-	current_score += 300 if camp.type == MapData.CampType.BOSS else 100
-	score_lbl.text = "★ %d / %d pkt" % [current_score, target_score]
-	
-	var drawn_card = research.draw_random_card(killer_slot)
-	var card_info = " (%s)" % drawn_card.name if drawn_card != null else ""
-	in_game_chat_log.append_text("[color=#ffd166]📢 [b]ZNISZCZONO OBÓZ![/b] Zdobyto surowce i Kartę Badań%s![/color]\n" % card_info)
-
-func _on_card_unlocked(card: ResearchSystem.CardDef, player_slot: int) -> void:
-	in_game_chat_log.append_text("[color=#a855f7]✨ Odblokowano technologię: [b]%s[/b] — %s[/color]\n" % [card.name, card.description])
+			in_game_chat_log.append_text("[color=#00f0ff]Tryb budowy: [b]%s[/b] (Klikaj, aby stawiać; PPM lub ESC anuluje)[/color]\n" % def.name)
 
 func _update_timer_display() -> void:
 	var total_sec = int(match_timer_seconds)
@@ -980,6 +1325,130 @@ func _on_chat_submitted(text: String) -> void:
 		in_game_chat_log.append_text("[color=#%s][b]%s:[/b][/color] %s\n" % [col_hex, settings_manager.player_name if settings_manager else "Pracownik", clean])
 		chat_sent.emit(clean)
 		in_game_chat_input.clear()
+
+func _open_building_production_modal(b: BuildingSystem.BuildingInstance) -> void:
+	if active_production_modal != null and is_instance_valid(active_production_modal):
+		active_production_modal.queue_free()
+		active_production_modal = null
+	var def = buildings.get_def(b.def_id)
+	active_production_modal = BuildingProductionModal.new(b, def, economy, units, network_manager)
+	active_production_modal.unit_trained.connect(_on_unit_trained)
+	active_production_modal.closed.connect(func(): active_production_modal = null)
+	add_child(active_production_modal)
+
+func _open_lab_research_modal(b: BuildingSystem.BuildingInstance) -> void:
+	if active_lab_modal != null and is_instance_valid(active_lab_modal):
+		active_lab_modal.queue_free()
+		active_lab_modal = null
+	active_lab_modal = LabResearchModal.new(b, economy, research, network_manager)
+	active_lab_modal.closed.connect(func(): active_lab_modal = null)
+	add_child(active_lab_modal)
+
+func _on_camp_destroyed(camp_node: MapData.CampNode, killer_slot: int) -> void:
+	current_score += 300 if camp_node.type == MapData.CampType.BOSS else 100
+	if score_lbl != null:
+		score_lbl.text = "★ %d / %d pkt" % [current_score, target_score]
+		
+	var camp_name = "Boss (Baza Centralna)" if camp_node.type == MapData.CampType.BOSS else "Wrogie Obozowisko"
+	if killer_slot == local_slot:
+		in_game_chat_log.append_text("[color=#00ff88]Zniszczono: [b]%s[/b]! Otrzymano surowce oraz kartę technologii![/color]\n" % camp_name)
+	else:
+		in_game_chat_log.append_text("[color=#ffaa00]Gracz %d zniszczył %s![/color]\n" % [killer_slot + 1, camp_name])
+	_update_resource_labels()
+
+func _on_unit_killed_reward(stone: int, iron: int, oil: int, redstone: int) -> void:
+	in_game_chat_log.append_text("[color=#38bdf8]💀 [b]POKONANO WROGA![/b] Zdobyto: +%d Kamień, +%d Żelazo, +%d Ropa, +%d Czerwienit[/color]\n" % [stone, iron, oil, redstone])
+	_add_score(15, "Zabicie jednostki (+15 pkt)")
+	_update_resource_labels()
+
+func _get_building_score_points(def_id: String) -> int:
+	match def_id:
+		"hq": return 100
+		"lab": return 60
+		"factory": return 50
+		"power_plant": return 40
+		"turret", "wall_turret": return 30
+		"mine_stone", "mine_iron", "mine_oil", "mine_redstone": return 25
+		"battery", "storage": return 20
+		"pylon": return 15
+		"wall": return 5
+		_: return 15
+
+func _add_score(amount: int, _reason: String = "") -> void:
+	current_score += amount
+	if score_lbl != null:
+		score_lbl.text = "★ %d / %d pkt" % [current_score, target_score]
+	if current_score >= target_score and not is_game_over:
+		_trigger_victory()
+
+func _trigger_victory() -> void:
+	is_game_over = true
+	in_game_chat_log.append_text("[color=#ffd700]🏆 [b]ZWYCIĘSTWO![/b] Osiągnięto wymagany limit punktów (%d / %d pkt)![/color]\n" % [current_score, target_score])
+	
+	# Fullscreen Victory Banner Overlay
+	var vic_panel = PanelContainer.new()
+	vic_panel.set_anchors_preset(PRESET_CENTER)
+	vic_panel.custom_minimum_size = Vector2(520, 260)
+	vic_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	vic_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	var sb = UITheme.create_panel_style(Color(0.02, 0.06, 0.12, 0.96), UITheme.COLOR_WARNING_GOLD, 8, 3, 24)
+	vic_panel.add_theme_stylebox_override("panel", sb)
+	add_child(vic_panel)
+	
+	var vbox = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 14)
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	vic_panel.add_child(vbox)
+	
+	var crown = Label.new()
+	crown.text = "🏆"
+	crown.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	crown.add_theme_font_size_override("font_size", 48)
+	vbox.add_child(crown)
+	
+	var vic_title = Label.new()
+	vic_title.text = "MISJA ZAKOŃCZONA SUKCESEM!"
+	vic_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vic_title.add_theme_font_size_override("font_size", 22)
+	vic_title.add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD)
+	vbox.add_child(vic_title)
+	
+	var vic_sub = Label.new()
+	vic_sub.text = "Zdobyto wymagany limit punktów (%d / %d pkt)!" % [current_score, target_score]
+	vic_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vic_sub.add_theme_font_size_override("font_size", 16)
+	vic_sub.add_theme_color_override("font_color", UITheme.COLOR_TEXT_LIGHT)
+	vbox.add_child(vic_sub)
+	
+	var ok_btn = Button.new()
+	ok_btn.text = "KONTYNUUJ GRĘ"
+	ok_btn.custom_minimum_size = Vector2(180, 44)
+	ok_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	UITheme.style_button(ok_btn, Color(0.12, 0.40, 0.25), UITheme.COLOR_SUCCESS_GREEN, 44, 16)
+	ok_btn.pressed.connect(func():
+		vic_panel.queue_free()
+	)
+	vbox.add_child(ok_btn)
+
+func _on_card_obtained(_item: ResearchSystem.CardItem) -> void:
+	in_game_chat_log.append_text("[color=#00f0ff]Otrzymano nową zaszyfrowaną kartę badań do ekwipunku Przetwórni Danych![/color]\n")
+
+func _on_card_revealed(item: ResearchSystem.CardItem) -> void:
+	in_game_chat_log.append_text("[color=#ffd700]ODKRYTO KARTĘ BADAŃ: %s %s (%s)[/color]\n" % [item.def.emoji, item.def.name, item.def.description])
+
+func _on_card_sold(_item: ResearchSystem.CardItem) -> void:
+	in_game_chat_log.append_text("[color=#ff9900]Sprzedano kartę technologii za 100%% zwrotu surowców.[/color]\n")
+	_update_resource_labels()
+
+func _on_unit_trained(def_id: String, building: BuildingSystem.BuildingInstance) -> void:
+	var spawn_pos = Vector2((building.grid_pos.x + building.size.x + 0.5) * TILE_PX, (building.grid_pos.y + 0.5) * TILE_PX)
+	var u = units.spawn_unit(def_id, building.slot, spawn_pos)
+	if u != null:
+		in_game_chat_log.append_text("[color=#00f0ff]Wyprodukowano: [b]%s[/b][/color]\n" % u.name)
+		if network_manager != null:
+			network_manager.send_unit_spawn(def_id, building.slot, u.instance_id, spawn_pos)
+		map_viewport.queue_redraw()
+		_update_resource_labels()
 
 func _toggle_esc_settings_modal() -> void:
 	if active_settings_modal != null and is_instance_valid(active_settings_modal):
@@ -1008,3 +1477,58 @@ func _hide_scoreboard() -> void:
 	if scoreboard_overlay != null and is_instance_valid(scoreboard_overlay):
 		scoreboard_overlay.queue_free()
 		scoreboard_overlay = null
+
+# ==============================================================================
+# Remote Network Handlers
+# ==============================================================================
+
+func _on_remote_building_placed(def_id: String, grid_pos: Vector2i, slot: int, building_id: int) -> void:
+	buildings.spawn_remote_building(def_id, grid_pos, slot, building_id)
+	if map_viewport: map_viewport.queue_redraw()
+	if minimap_canvas: minimap_canvas.queue_redraw()
+
+func _on_remote_building_demolished(grid_pos: Vector2i, slot: int) -> void:
+	buildings.demolish_building_at(grid_pos, slot, null)
+	if map_viewport: map_viewport.queue_redraw()
+	if minimap_canvas: minimap_canvas.queue_redraw()
+
+func _on_remote_unit_moved(unit_ids: Array, target_pos: Vector2) -> void:
+	units.command_move_by_ids(unit_ids, target_pos)
+	if map_viewport: map_viewport.queue_redraw()
+
+func _on_remote_unit_constructed(unit_ids: Array, building_id: int) -> void:
+	units.command_construct_by_ids(unit_ids, building_id, buildings.building_instances)
+	if map_viewport: map_viewport.queue_redraw()
+
+func _on_remote_unit_gathered(unit_ids: Array, res_grid_pos: Vector2i) -> void:
+	units.command_gather_by_ids(unit_ids, res_grid_pos, active_map)
+	if map_viewport: map_viewport.queue_redraw()
+
+func _on_remote_unit_attacked(unit_ids: Array, camp_grid_pos: Vector2i) -> void:
+	units.command_attack_camp_by_ids(unit_ids, camp_grid_pos, active_map)
+	if map_viewport: map_viewport.queue_redraw()
+
+func _on_remote_unit_spawned(def_id: String, slot: int, unit_id: int, spawn_pos: Vector2) -> void:
+	units.spawn_unit(def_id, slot, spawn_pos, unit_id)
+	if map_viewport: map_viewport.queue_redraw()
+
+func _on_remote_units_snapshot(slot: int, snapshot: Array) -> void:
+	if slot != local_slot:
+		units.apply_units_snapshot(slot, snapshot)
+
+func _on_remote_turret_fired(from_pos: Vector2, to_pos: Vector2, is_wall_turret: bool) -> void:
+	combat.spawn_beam(from_pos, to_pos, is_wall_turret)
+	if map_viewport: map_viewport.queue_redraw()
+
+func _on_local_turret_fired(from_pos: Vector2, to_pos: Vector2, is_wall_turret: bool) -> void:
+	if network_manager != null:
+		network_manager.send_turret_fire(from_pos, to_pos, is_wall_turret)
+
+func _on_remote_camp_damaged(camp_grid_pos: Vector2i, damage: int, killer_slot: int) -> void:
+	for c in active_map.camps:
+		if c.grid_pos == camp_grid_pos and c.hp > 0:
+			c.hp -= damage
+			if c.hp <= 0 and c.max_hp > 0:
+				combat._on_camp_defeated(c, killer_slot, null)
+			break
+	if map_viewport: map_viewport.queue_redraw()
