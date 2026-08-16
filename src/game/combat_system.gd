@@ -55,15 +55,16 @@ func update_combat(
 			
 		var turret_world = Vector2((b.grid_pos.x + 0.5) * tile_px, (b.grid_pos.y + 0.5) * tile_px)
 		var fire_range_px = TURRET_RANGE_TILES * tile_px * (research.turret_range_mult if research else 1.0)
+		var fire_range_sq = fire_range_px * fire_range_px
 		
 		# --- TARGET PRIORITY 1: Enemy Units in 3 tiles ---
 		var target_unit: UnitManager.UnitInstance = null
-		var closest_unit_dist = fire_range_px
+		var closest_unit_dist_sq = fire_range_sq
 		for u in units:
 			if u.slot != b.slot and u.hp > 0:
-				var dist = turret_world.distance_to(u.world_pos)
-				if dist <= closest_unit_dist:
-					closest_unit_dist = dist
+				var dist_sq = turret_world.distance_squared_to(u.world_pos)
+				if dist_sq <= closest_unit_dist_sq:
+					closest_unit_dist_sq = dist_sq
 					target_unit = u
 					
 		if target_unit != null:
@@ -82,13 +83,13 @@ func update_combat(
 			
 		# --- TARGET PRIORITY 2: Enemy Buildings in 3 tiles ---
 		var target_enemy_b: BuildingSystem.BuildingInstance = null
-		var closest_b_dist = fire_range_px
+		var closest_b_dist_sq = fire_range_sq
 		for other_b in buildings:
 			if other_b.slot != b.slot and other_b.hp > 0:
 				var b_center = Vector2((other_b.grid_pos.x + other_b.size.x * 0.5) * tile_px, (other_b.grid_pos.y + other_b.size.y * 0.5) * tile_px)
-				var dist = turret_world.distance_to(b_center)
-				if dist <= closest_b_dist:
-					closest_b_dist = dist
+				var dist_sq = turret_world.distance_squared_to(b_center)
+				if dist_sq <= closest_b_dist_sq:
+					closest_b_dist_sq = dist_sq
 					target_enemy_b = other_b
 					
 		if target_enemy_b != null:
@@ -105,13 +106,13 @@ func update_combat(
 			
 		# --- TARGET PRIORITY 3: Neutral Camps & Boss in 3 tiles ---
 		var target_camp: MapData.CampNode = null
-		var closest_camp_dist = fire_range_px
+		var closest_camp_dist_sq = fire_range_sq
 		for camp in map_data.camps:
 			if camp.hp <= 0: continue
 			var camp_world = Vector2((camp.grid_pos.x + 0.5) * tile_px, (camp.grid_pos.y + 0.5) * tile_px)
-			var dist = turret_world.distance_to(camp_world)
-			if dist <= closest_camp_dist:
-				closest_camp_dist = dist
+			var dist_sq = turret_world.distance_squared_to(camp_world)
+			if dist_sq <= closest_camp_dist_sq:
+				closest_camp_dist_sq = dist_sq
 				target_camp = camp
 				
 		if target_camp != null:

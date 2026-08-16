@@ -2,6 +2,8 @@
 class_name BuildingSystem
 extends RefCounted
 
+signal building_topology_changed()
+
 class BuildingDef:
 	var id: String
 	var name: String
@@ -102,10 +104,12 @@ static func is_tile_powered(tile: Vector2i, buildings_list: Array, player_slot: 
 	return false
 
 func update_timers(delta: float, local_slot: int = -1, research: ResearchSystem = null) -> void:
+	var topology_changed = false
 	for i in range(building_instances.size() - 1, -1, -1):
 		var b = building_instances[i]
 		if b.hp <= 0:
 			building_instances.remove_at(i)
+			topology_changed = true
 			continue
 			
 		if b.emp_overload_timer > 0.0:
@@ -116,6 +120,9 @@ func update_timers(delta: float, local_slot: int = -1, research: ResearchSystem 
 			if b.slot == local_slot and b.build_progress >= 1.0 and b.hp > 0 and b.hp < b.max_hp and b.is_powered:
 				var heal_amt = ceilf(b.max_hp * research.structure_regen_pct * delta)
 				b.hp = mini(b.max_hp, b.hp + int(heal_amt))
+				
+	if topology_changed:
+		building_topology_changed.emit()
 
 func _init() -> void:
 	_register_definitions()
@@ -299,6 +306,7 @@ func place_building(
 	inst.build_progress = 1.0 if skip_validation else 0.0
 	
 	building_instances.append(inst)
+	building_topology_changed.emit()
 	return inst
 
 func spawn_remote_building(def_id: String, grid_pos: Vector2i, player_slot: int, building_id: int) -> BuildingInstance:
@@ -336,6 +344,7 @@ func spawn_remote_building(def_id: String, grid_pos: Vector2i, player_slot: int,
 	inst.build_progress = 1.0 if def_id == "hq" else 0.0
 	
 	building_instances.append(inst)
+	building_topology_changed.emit()
 	return inst
 
 func demolish_building_at(grid_pos: Vector2i, player_slot: int, economy: EconomyManager = null) -> bool:
@@ -349,6 +358,7 @@ func demolish_building_at(grid_pos: Vector2i, player_slot: int, economy: Economy
 			if def != null and economy != null:
 				economy.refund_resources(def.cost, 0.5)
 			building_instances.remove_at(i)
+			building_topology_changed.emit()
 			return true
 	return false
 

@@ -345,27 +345,47 @@ func _resolve_unit_collisions(delta: float, _map_data: MapData, tile_px: float) 
 	var count = active_units.size()
 	if count < 2: return
 	
-	# Push overlapping units apart smoothly
-	for i in range(count):
-		var u1: UnitInstance = active_units[i]
-		for j in range(i + 1, count):
-			var u2: UnitInstance = active_units[j]
-			var min_dist = u1.collision_radius + u2.collision_radius
-			var diff = u1.world_pos - u2.world_pos
-			var dist = diff.length()
+	# Spatial Hash Grid for O(N) local neighbor collision tests
+	var cell_sz = 48.0
+	var grid: Dictionary = {}
+	for u in active_units:
+		var cx = int(floor(u.world_pos.x / cell_sz))
+		var cy = int(floor(u.world_pos.y / cell_sz))
+		var cell_key = (cx << 16) ^ (cy & 0xFFFF)
+		if not grid.has(cell_key):
+			grid[cell_key] = [u]
+		else:
+			grid[cell_key].append(u)
 			
-			if dist < min_dist:
-				var overlap = min_dist - dist
-				var push_dir: Vector2
-				if dist < 0.001:
-					var angle = float(u1.instance_id % 360) * (PI / 180.0)
-					push_dir = Vector2(cos(angle), sin(angle))
-				else:
-					push_dir = diff / dist
-					
-				var push_amount = overlap * 0.5 * minf(1.0, delta * 15.0)
-				u1.world_pos += push_dir * push_amount
-				u2.world_pos -= push_dir * push_amount
+	var push_mult = minf(1.0, delta * 15.0)
+	
+	# Check only self and 8 surrounding cells
+	for u1 in active_units:
+		var cx = int(floor(u1.world_pos.x / cell_sz))
+		var cy = int(floor(u1.world_pos.y / cell_sz))
+		for nx in range(cx - 1, cx + 2):
+			for ny in range(cy - 1, cy + 2):
+				var nkey = (nx << 16) ^ (ny & 0xFFFF)
+				if grid.has(nkey):
+					var neighbors: Array = grid[nkey]
+					for u2 in neighbors:
+						if u1.instance_id < u2.instance_id:
+							var min_dist = u1.collision_radius + u2.collision_radius
+							var diff = u1.world_pos - u2.world_pos
+							var dist_sq = diff.length_squared()
+							if dist_sq < min_dist * min_dist:
+								var dist = sqrt(dist_sq)
+								var overlap = min_dist - dist
+								var push_dir: Vector2
+								if dist < 0.001:
+									var angle = float(u1.instance_id % 360) * (PI / 180.0)
+									push_dir = Vector2(cos(angle), sin(angle))
+								else:
+									push_dir = diff / dist
+									
+								var push_amount = overlap * 0.5 * push_mult
+								u1.world_pos += push_dir * push_amount
+								u2.world_pos -= push_dir * push_amount
 				
 	# Keep units safely within playable map bounds
 	if _map_data != null:

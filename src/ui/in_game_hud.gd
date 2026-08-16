@@ -74,6 +74,13 @@ var camp_card_popup: PanelContainer = null
 var last_hovered_camp: MapData.CampNode = null
 var pause_banner_overlay: PanelContainer = null
 
+# Performance Optimization Caching & Throttling
+var ui_tick_timer: float = 0.0
+var minimap_tick_timer: float = 0.0
+var power_mesh_dirty: bool = true
+var cached_power_cables: Array = []
+var cached_power_areas: Dictionary = {}
+
 func _init(p_net: NetworkManager = null, p_settings: SettingsManager = null, p_map: MapData = null) -> void:
 	network_manager = p_net
 	settings_manager = p_settings
@@ -107,6 +114,7 @@ func _ready() -> void:
 		bot_ai.setup_bots(network_manager.get_players_list())
 	
 	# Connect Combat & Research Signals
+	buildings.building_topology_changed.connect(func(): power_mesh_dirty = true)
 	combat.camp_destroyed.connect(_on_camp_destroyed)
 	combat.turret_fired.connect(_on_local_turret_fired)
 	combat.unit_killed_reward.connect(_on_unit_killed_reward)
@@ -256,8 +264,6 @@ func _process(delta: float) -> void:
 		if bot_ai != null and (network_manager == null or network_manager.is_host):
 			bot_ai.update(delta, active_map, buildings, units, TILE_PX)
 			
-		_update_bot_status_ui()
-		
 		# Periodic units snapshot sync (5 Hz heartbeat)
 		if network_manager != null:
 			snapshot_timer += delta
@@ -267,10 +273,21 @@ func _process(delta: float) -> void:
 				if not snap.is_empty():
 					network_manager.send_units_snapshot(local_slot, snap)
 		
-		_update_resource_labels()
-		_update_selected_units_ui()
+		# Throttled UI Refresh (10 Hz)
+		ui_tick_timer += delta
+		if ui_tick_timer >= 0.1:
+			ui_tick_timer = 0.0
+			_update_resource_labels()
+			_update_bot_status_ui()
+			_update_selected_units_ui()
+			
 		if map_viewport: map_viewport.queue_redraw()
-		if minimap_canvas: minimap_canvas.queue_redraw()
+		
+		# Throttled Minimap Redraw (16 Hz)
+		minimap_tick_timer += delta
+		if minimap_tick_timer >= 0.06:
+			minimap_tick_timer = 0.0
+			if minimap_canvas: minimap_canvas.queue_redraw()
 		
 	# Camera Pan (Keyboard + Screen Edge Panning)
 	var move = Vector2.ZERO
@@ -873,28 +890,36 @@ func _build_minimap_box() -> void:
 func _update_bot_status_ui() -> void:
 	if bot_status_vbox == null or bot_ai == null: return
 	
-	for c in bot_status_vbox.get_children():
-		c.queue_free()
-		
 	if bot_ai.active_bots.is_empty():
-		bot_status_vbox.get_parent().visible = false
+		if bot_status_vbox.get_parent().visible:
+			bot_status_vbox.get_parent().visible = false
 		return
 		
-	bot_status_vbox.get_parent().visible = true
-	
-	var hdr = Label.new()
-	hdr.text = "🤖 STATUS BOTÓW:"
-	hdr.add_theme_font_size_override("font_size", 10)
-	hdr.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
-	bot_status_vbox.add_child(hdr)
-	
-	for b in bot_ai.active_bots:
-		var slot_col = GameState.SLOT_COLORS[b.slot] if b.slot < GameState.SLOT_COLORS.size() else UITheme.COLOR_TEXT_LIGHT
-		var lbl = Label.new()
-		lbl.text = "• %s: %s" % [b.data.name, b.current_status]
-		lbl.add_theme_font_size_override("font_size", 9)
-		lbl.add_theme_color_override("font_color", slot_col)
-		bot_status_vbox.add_child(lbl)
+	if not bot_status_vbox.get_parent().visible:
+		bot_status_vbox.get_parent().visible = true
+		
+	var expected_count = 1 + bot_ai.active_bots.size()
+	if bot_status_vbox.get_child_count() != expected_count:
+		for c in bot_status_vbox.get_children():
+			c.queue_free()
+		var hdr = Label.new()
+		hdr.text = "🤖 STATUS BOTÓW:"
+		hdr.add_theme_font_size_override("font_size", 10)
+		hdr.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
+		bot_status_vbox.add_child(hdr)
+		for b in bot_ai.active_bots:
+			var slot_col = GameState.SLOT_COLORS[b.slot] if b.slot < GameState.SLOT_COLORS.size() else UITheme.COLOR_TEXT_LIGHT
+			var lbl = Label.new()
+			lbl.name = "bot_lbl_%d" % b.slot
+			lbl.add_theme_font_size_override("font_size", 9)
+			lbl.add_theme_color_override("font_color", slot_col)
+			bot_status_vbox.add_child(lbl)
+			
+	for i in range(bot_ai.active_bots.size()):
+		var b = bot_ai.active_bots[i]
+		var lbl = bot_status_vbox.get_child(i + 1) as Label
+		if lbl != null:
+			lbl.text = "• %s: %s" % [b.data.name, b.current_status]
 
 func _on_minimap_draw() -> void:
 	if minimap_canvas == null or active_map == null: return
@@ -1011,12 +1036,19 @@ func _build_selected_units_panel() -> void:
 func _update_selected_units_ui() -> void:
 	if selected_units_vbox == null or units == null: return
 	
-	for c in selected_units_vbox.get_children():
-		c.queue_free()
-		
 	var selected_list = units.units.filter(func(u): return u.slot == local_slot and u.selected and u.hp > 0)
 	if selected_list.is_empty():
+		if selected_units_container.visible:
+			selected_units_container.visible = false
+			for c in selected_units_vbox.get_children():
+				c.queue_free()
 		return
+		
+	if not selected_units_container.visible:
+		selected_units_container.visible = true
+		
+	for c in selected_units_vbox.get_children():
+		c.queue_free()
 		
 	var display_count = mini(selected_list.size(), 5)
 	for i in range(display_count):
@@ -1119,83 +1151,157 @@ func _update_resource_labels() -> void:
 			power_lbl.add_theme_color_override("font_color", UITheme.COLOR_SUCCESS_GREEN)
 
 # ==============================================================================
-# Map Canvas Rendering
+# Map Canvas Rendering (High-Performance Frustum Culled + Pre-Cached Power Mesh)
 # ==============================================================================
+
+func _rebuild_power_mesh_cache() -> void:
+	power_mesh_dirty = false
+	cached_power_cables.clear()
+	cached_power_areas.clear()
+	
+	var power_emitters = buildings.building_instances.filter(func(b):
+		return (b.def_id in ["hq", "pylon", "power_plant"]) and b.build_progress >= 1.0 and b.hp > 0
+	)
+	
+	# 1. Precalculate high-voltage electric transmission cables
+	for i in range(power_emitters.size()):
+		var b1 = power_emitters[i]
+		var c1_tile = Vector2(b1.grid_pos) + Vector2(b1.size) * 0.5
+		var center1_tile = b1.grid_pos + Vector2i(1, 1) if b1.def_id == "hq" else b1.grid_pos
+		
+		for j in range(i + 1, power_emitters.size()):
+			var b2 = power_emitters[j]
+			if b1.slot != b2.slot: continue
+			var center2_tile = b2.grid_pos + Vector2i(1, 1) if b2.def_id == "hq" else b2.grid_pos
+			
+			var in_range = BuildingSystem.is_tile_powered(center2_tile, [b1], b1.slot) or BuildingSystem.is_tile_powered(center1_tile, [b2], b2.slot)
+			if in_range:
+				var c2_tile = Vector2(b2.grid_pos) + Vector2(b2.size) * 0.5
+				var slot_col = GameState.SLOT_COLORS[b1.slot] if b1.slot < GameState.SLOT_COLORS.size() else UITheme.COLOR_ACCENT_CYAN
+				cached_power_cables.append({
+					"c1_tile": c1_tile,
+					"c2_tile": c2_tile,
+					"color": slot_col
+				})
+				
+	# 2. Precalculate power area boundaries and edges for Pylons and HQs
+	for b in power_emitters:
+		if b.def_id in ["hq", "pylon"]:
+			var radius = BuildingSystem.POWER_GRID_HQ_RADIUS if b.def_id == "hq" else BuildingSystem.POWER_GRID_PYLON_RADIUS
+			var b_center_tile = b.grid_pos + Vector2i(1, 1) if b.def_id == "hq" else b.grid_pos
+			var power_tiles = BuildingSystem.get_powered_tiles(b_center_tile, radius)
+			var slot_col = GameState.SLOT_COLORS[b.slot] if b.slot < GameState.SLOT_COLORS.size() else Color.WHITE
+			
+			var edges_arr: Array = []
+			for pt in power_tiles:
+				var pt_v = Vector2i(pt.x, pt.y)
+				for edge_data in [
+					[Vector2i(0, -1), Vector2(0, 0), Vector2(1, 0)],
+					[Vector2i(0, 1), Vector2(0, 1), Vector2(1, 1)],
+					[Vector2i(-1, 0), Vector2(0, 0), Vector2(0, 1)],
+					[Vector2i(1, 0), Vector2(1, 0), Vector2(1, 1)]
+				]:
+					var neighbor = pt_v + edge_data[0]
+					if not power_tiles.has(neighbor):
+						edges_arr.append([
+							Vector2(pt.x + edge_data[1].x, pt.y + edge_data[1].y),
+							Vector2(pt.x + edge_data[2].x, pt.y + edge_data[2].y)
+						])
+						
+			cached_power_areas[b.instance_id] = {
+				"slot_col": slot_col,
+				"tiles": power_tiles,
+				"edges": edges_arr
+			}
 
 func _on_map_draw() -> void:
 	if map_viewport == null or active_map == null: return
 	var rect = map_viewport.get_rect()
-	var w = rect.size.x
-	var h = rect.size.y
 	
 	map_viewport.draw_rect(rect, Color(0.03, 0.05, 0.08, 1.0), true)
 	
 	var tile_sz = TILE_PX * map_zoom
 	var origin = map_camera_pos
 	
+	# Viewport Culling Bounds in World Coordinates
+	var vis_world_min = -origin / map_zoom - Vector2(100, 100)
+	var vis_world_max = (rect.size - origin) / map_zoom + Vector2(100, 100)
+	var vis_world_rect = Rect2(vis_world_min, vis_world_max - vis_world_min)
+	
+	var min_gx = maxi(0, int(floor(vis_world_min.x / TILE_PX)))
+	var max_gx = mini(active_map.width, int(ceil(vis_world_max.x / TILE_PX)))
+	var min_gy = maxi(0, int(floor(vis_world_min.y / TILE_PX)))
+	var max_gy = mini(active_map.height, int(ceil(vis_world_max.y / TILE_PX)))
+	
 	# 1. 1-tile Non-buildable Border
 	var map_rect = Rect2(origin, Vector2(active_map.width * tile_sz, active_map.height * tile_sz))
 	map_viewport.draw_rect(map_rect, Color(0.04, 0.07, 0.11, 1.0), true)
 	map_viewport.draw_rect(map_rect, Color(0.20, 0.30, 0.45, 0.8), false, 2.0)
 	
-	# 2. 50x50 Grid Lines
+	# 2. Culled 50x50 Grid Lines
 	var grid_col = Color(0.08, 0.14, 0.22, 0.35)
-	for gx in range(active_map.width + 1):
+	for gx in range(min_gx, max_gx + 1):
 		var lx = origin.x + gx * tile_sz
-		map_viewport.draw_line(Vector2(lx, origin.y), Vector2(lx, origin.y + active_map.height * tile_sz), grid_col, 1.0)
-	for gy in range(active_map.height + 1):
+		map_viewport.draw_line(Vector2(lx, origin.y + min_gy * tile_sz), Vector2(lx, origin.y + max_gy * tile_sz), grid_col, 1.0)
+	for gy in range(min_gy, max_gy + 1):
 		var ly = origin.y + gy * tile_sz
-		map_viewport.draw_line(Vector2(origin.x, ly), Vector2(origin.x + active_map.width * tile_sz, ly), grid_col, 1.0)
+		map_viewport.draw_line(Vector2(origin.x + min_gx * tile_sz, ly), Vector2(origin.x + max_gx * tile_sz, ly), grid_col, 1.0)
 		
-	# 3. Boss Area & Neutral Camps 2.0
+	# 3. Boss Area & Neutral Camps 2.0 (Culled)
 	for c in active_map.camps:
 		if c.hp <= 0: continue
-		var c_world = origin + Vector2((c.grid_pos.x + 0.5) * tile_sz, (c.grid_pos.y + 0.5) * tile_sz)
+		var c_world_pos = Vector2((c.grid_pos.x + 0.5) * TILE_PX, (c.grid_pos.y + 0.5) * TILE_PX)
+		if not vis_world_rect.has_point(c_world_pos) and c_world_pos.distance_to(vis_world_rect.get_center()) > 200.0:
+			continue
+			
+		var c_screen = origin + c_world_pos * map_zoom
 		if c.type == MapData.CampType.BOSS:
 			# Boss 2.0: 5x5 restricted zone with hazard crosshatch and 3x3 fortified bastion
-			var boss_zone = Rect2(c_world - Vector2(tile_sz * 2.5, tile_sz * 2.5), Vector2(tile_sz * 5.0, tile_sz * 5.0))
+			var boss_zone = Rect2(c_screen - Vector2(tile_sz * 2.5, tile_sz * 2.5), Vector2(tile_sz * 5.0, tile_sz * 5.0))
 			map_viewport.draw_rect(boss_zone, Color(0.35, 0.05, 0.08, 0.20), true)
 			map_viewport.draw_rect(boss_zone, Color(0.95, 0.25, 0.25, 0.75), false, 2.0)
 			
 			# Fortified Bastion Core (3x3)
-			var core_rect = Rect2(c_world - Vector2(tile_sz * 1.5, tile_sz * 1.5), Vector2(tile_sz * 3.0, tile_sz * 3.0))
+			var core_rect = Rect2(c_screen - Vector2(tile_sz * 1.5, tile_sz * 1.5), Vector2(tile_sz * 3.0, tile_sz * 3.0))
 			map_viewport.draw_rect(core_rect, Color(0.10, 0.02, 0.04, 0.90), true)
 			map_viewport.draw_rect(core_rect, UITheme.COLOR_WARNING_GOLD, false, 2.5)
 			
 			# Pulsating Central Core Reactor
-			map_viewport.draw_circle(c_world, tile_sz * 1.0, Color(0.9, 0.15, 0.2, 0.85))
-			map_viewport.draw_circle(c_world, tile_sz * 0.6, Color(1.0, 0.4, 0.2, 0.95))
-			map_viewport.draw_circle(c_world, tile_sz * 0.25, Color(1.0, 0.95, 0.5, 1.0))
+			map_viewport.draw_circle(c_screen, tile_sz * 1.0, Color(0.9, 0.15, 0.2, 0.85))
+			map_viewport.draw_circle(c_screen, tile_sz * 0.6, Color(1.0, 0.4, 0.2, 0.95))
+			map_viewport.draw_circle(c_screen, tile_sz * 0.25, Color(1.0, 0.95, 0.5, 1.0))
 			
 			# Bastion Spikes / Turret Emplacements at 4 corners
 			for offset in [Vector2(-1.3, -1.3), Vector2(1.3, -1.3), Vector2(-1.3, 1.3), Vector2(1.3, 1.3)]:
-				var spike_pos = c_world + offset * tile_sz
+				var spike_pos = c_screen + offset * tile_sz
 				map_viewport.draw_circle(spike_pos, 5.0 * map_zoom, Color(1.0, 0.3, 0.3))
-				map_viewport.draw_line(c_world, spike_pos, Color(1.0, 0.2, 0.2, 0.5), 1.5)
+				map_viewport.draw_line(c_screen, spike_pos, Color(1.0, 0.2, 0.2, 0.5), 1.5)
 				
-			map_viewport.draw_string(ThemeDB.fallback_font, c_world + Vector2(-48, -tile_sz * 1.6), "☠️ CYBER-BEHEMOTH", HORIZONTAL_ALIGNMENT_CENTER, -1, 13, UITheme.COLOR_WARNING_GOLD)
-			_draw_health_bar(c_world + Vector2(0, tile_sz * 1.7), c.hp, c.max_hp, 90.0 * map_zoom, true)
+			map_viewport.draw_string(ThemeDB.fallback_font, c_screen + Vector2(-48, -tile_sz * 1.6), "☠️ CYBER-BEHEMOTH", HORIZONTAL_ALIGNMENT_CENTER, -1, 13, UITheme.COLOR_WARNING_GOLD)
+			_draw_health_bar(c_screen + Vector2(0, tile_sz * 1.7), c.hp, c.max_hp, 90.0 * map_zoom, true)
 		else:
 			# Neutral Camp 2.0: 2x2 Fortified Bunker Outpost
-			var camp_rect = Rect2(c_world - Vector2(tile_sz * 0.9, tile_sz * 0.9), Vector2(tile_sz * 1.8, tile_sz * 1.8))
+			var camp_rect = Rect2(c_screen - Vector2(tile_sz * 0.9, tile_sz * 0.9), Vector2(tile_sz * 1.8, tile_sz * 1.8))
 			map_viewport.draw_rect(camp_rect, Color(0.18, 0.08, 0.02, 0.85), true)
 			map_viewport.draw_rect(camp_rect, UITheme.COLOR_ACCENT_ORANGE, false, 2.0)
 			
 			# Inner Bunker Core
-			map_viewport.draw_circle(c_world, tile_sz * 0.65, Color(0.9, 0.45, 0.1, 0.9))
-			map_viewport.draw_circle(c_world, tile_sz * 0.35, Color(1.0, 0.75, 0.2, 0.95))
+			map_viewport.draw_circle(c_screen, tile_sz * 0.65, Color(0.9, 0.45, 0.1, 0.9))
+			map_viewport.draw_circle(c_screen, tile_sz * 0.35, Color(1.0, 0.75, 0.2, 0.95))
 			
 			# Barbed Outpost corner nodes
 			for offset in [Vector2(-0.8, -0.8), Vector2(0.8, -0.8), Vector2(-0.8, 0.8), Vector2(0.8, 0.8)]:
-				var p_pos = c_world + offset * tile_sz
+				var p_pos = c_screen + offset * tile_sz
 				map_viewport.draw_circle(p_pos, 3.5 * map_zoom, Color(1.0, 0.6, 0.1))
 				
-			map_viewport.draw_string(ThemeDB.fallback_font, c_world + Vector2(-42, -tile_sz * 1.05), "⚔️ WROGI POSTERUNEK", HORIZONTAL_ALIGNMENT_CENTER, -1, 11, UITheme.COLOR_ACCENT_ORANGE)
-			_draw_health_bar(c_world + Vector2(0, tile_sz * 1.15), c.hp, c.max_hp, 60.0 * map_zoom, true)
+			map_viewport.draw_string(ThemeDB.fallback_font, c_screen + Vector2(-42, -tile_sz * 1.05), "⚔️ WROGI POSTERUNEK", HORIZONTAL_ALIGNMENT_CENTER, -1, 11, UITheme.COLOR_ACCENT_ORANGE)
+			_draw_health_bar(c_screen + Vector2(0, tile_sz * 1.15), c.hp, c.max_hp, 60.0 * map_zoom, true)
 
-	# 4. Resource Deposits
+	# 4. Resource Deposits (Culled)
 	for r in active_map.resources:
 		if r.amount <= 0: continue
+		if r.grid_pos.x < min_gx or r.grid_pos.x > max_gx or r.grid_pos.y < min_gy or r.grid_pos.y > max_gy:
+			continue
 		var r_pos = origin + Vector2(r.grid_pos.x * tile_sz, r.grid_pos.y * tile_sz)
 		var r_rect = Rect2(r_pos + Vector2(2, 2), Vector2(tile_sz - 4, tile_sz - 4))
 		
@@ -1210,42 +1316,27 @@ func _on_map_draw() -> void:
 		map_viewport.draw_rect(r_rect, r_col, false, 1.5)
 		map_viewport.draw_circle(r_rect.get_center(), tile_sz * 0.3, r_col)
 
-	# 4.5 High-Voltage Electric Power Transmission Lines (Linie wysokiego napięcia)
-	var power_emitters = buildings.building_instances.filter(func(b): 
-		return (b.def_id in ["hq", "pylon", "power_plant"]) and b.build_progress >= 1.0
-	)
-	for i in range(power_emitters.size()):
-		var b1 = power_emitters[i]
-		var c1 = origin + (Vector2(b1.grid_pos) + Vector2(b1.size) * 0.5) * tile_sz
-		var center1_tile = b1.grid_pos + Vector2i(1, 1) if b1.def_id == "hq" else b1.grid_pos
+	# 4.5 High-Voltage Electric Power Transmission Lines (Using Pre-Calculated Cache)
+	if power_mesh_dirty:
+		_rebuild_power_mesh_cache()
 		
-		for j in range(i + 1, power_emitters.size()):
-			var b2 = power_emitters[j]
-			if b1.slot != b2.slot: continue
-			
-			var center2_tile = b2.grid_pos + Vector2i(1, 1) if b2.def_id == "hq" else b2.grid_pos
-			
-			# Connect only if pylons/nodes are strictly within each other's power field
-			var in_range = BuildingSystem.is_tile_powered(center2_tile, [b1], b1.slot) or BuildingSystem.is_tile_powered(center1_tile, [b2], b2.slot)
-			
-			if in_range:
-				var c2 = origin + (Vector2(b2.grid_pos) + Vector2(b2.size) * 0.5) * tile_sz
-				var slot_col = GameState.SLOT_COLORS[b1.slot] if b1.slot < GameState.SLOT_COLORS.size() else UITheme.COLOR_ACCENT_CYAN
-				
-				# Electric Glow halo
-				map_viewport.draw_line(c1, c2, Color(slot_col.r, slot_col.g, slot_col.b, 0.25), 6.0 * map_zoom)
-				# Main cable sheath
-				map_viewport.draw_line(c1, c2, Color(0.04, 0.10, 0.18, 0.90), 3.0 * map_zoom)
-				# High-voltage energetic core line
-				map_viewport.draw_line(c1, c2, Color(slot_col.r, slot_col.g, slot_col.b, 0.95), 1.5 * map_zoom)
-				
-				# Insulator terminal nodes
-				map_viewport.draw_circle(c1, 4.0 * map_zoom, Color(slot_col.r, slot_col.g, slot_col.b, 0.8))
-				map_viewport.draw_circle(c2, 4.0 * map_zoom, Color(slot_col.r, slot_col.g, slot_col.b, 0.8))
+	for cable in cached_power_cables:
+		var c1 = origin + cable.c1_tile * tile_sz
+		var c2 = origin + cable.c2_tile * tile_sz
+		var slot_col = cable.color
+		map_viewport.draw_line(c1, c2, Color(slot_col.r, slot_col.g, slot_col.b, 0.25), 6.0 * map_zoom)
+		map_viewport.draw_line(c1, c2, Color(0.04, 0.10, 0.18, 0.90), 3.0 * map_zoom)
+		map_viewport.draw_line(c1, c2, Color(slot_col.r, slot_col.g, slot_col.b, 0.95), 1.5 * map_zoom)
+		map_viewport.draw_circle(c1, 4.0 * map_zoom, Color(slot_col.r, slot_col.g, slot_col.b, 0.8))
+		map_viewport.draw_circle(c2, 4.0 * map_zoom, Color(slot_col.r, slot_col.g, slot_col.b, 0.8))
 
-	# 5. Buildings
+	# 5. Buildings (Culled + Cached Power Grid Overlays)
 	for b in buildings.building_instances:
 		if b.hp <= 0: continue
+		var b_world_rect = Rect2(Vector2(b.grid_pos) * TILE_PX, Vector2(b.size) * TILE_PX)
+		if not vis_world_rect.intersects(b_world_rect) and (Vector2(b.grid_pos) * TILE_PX).distance_to(vis_world_rect.get_center()) > 300.0:
+			continue
+			
 		var b_pos = origin + Vector2(b.grid_pos.x * tile_sz, b.grid_pos.y * tile_sz)
 		var b_box = Rect2(b_pos, Vector2(b.size.x * tile_sz, b.size.y * tile_sz))
 		var is_ghost = (b.build_progress < 1.0)
@@ -1286,35 +1377,24 @@ func _on_map_draw() -> void:
 			var ov_txt = "⚡ EMP (%ds)" % int(ceil(b.emp_overload_timer))
 			map_viewport.draw_string(ThemeDB.fallback_font, b_pos + Vector2(0, -4 * map_zoom), ov_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.4, 0.8, 1.0))
 		
-		# Draw Power Grid coverage for Pylons and HQ (tile-based with corner cuts)
-		if b.def_id in ["hq", "pylon"] and b.build_progress >= 1.0:
-			var radius = BuildingSystem.POWER_GRID_HQ_RADIUS if b.def_id == "hq" else BuildingSystem.POWER_GRID_PYLON_RADIUS
-			var b_center_tile = b.grid_pos + Vector2i(1, 1) if b.def_id == "hq" else b.grid_pos
-			var power_tiles = BuildingSystem.get_powered_tiles(b_center_tile, radius)
-			var power_col = Color(slot_col.r, slot_col.g, slot_col.b, 0.08)
-			var power_border_col = Color(slot_col.r, slot_col.g, slot_col.b, 0.18)
-			for pt in power_tiles:
+		# Draw Power Grid Area (From precalculated cache)
+		if cached_power_areas.has(b.instance_id) and b.build_progress >= 1.0:
+			var area_data = cached_power_areas[b.instance_id]
+			var power_col = Color(area_data.slot_col.r, area_data.slot_col.g, area_data.slot_col.b, 0.08)
+			var power_border_col = Color(area_data.slot_col.r, area_data.slot_col.g, area_data.slot_col.b, 0.18)
+			for pt in area_data.tiles:
 				var pt_pos = origin + Vector2(pt.x * tile_sz, pt.y * tile_sz)
-				var pt_rect = Rect2(pt_pos, Vector2(tile_sz, tile_sz))
-				map_viewport.draw_rect(pt_rect, power_col, true)
-			# Draw border outline of the power area
-			for pt in power_tiles:
-				var pt_v = Vector2i(pt.x, pt.y)
-				for edge_data in [
-					[Vector2i(0, -1), Vector2(0, 0), Vector2(1, 0)],  # top
-					[Vector2i(0, 1), Vector2(0, 1), Vector2(1, 1)],   # bottom
-					[Vector2i(-1, 0), Vector2(0, 0), Vector2(0, 1)],  # left
-					[Vector2i(1, 0), Vector2(1, 0), Vector2(1, 1)]    # right
-				]:
-					var neighbor = pt_v + edge_data[0]
-					if not power_tiles.has(neighbor):
-						var e1 = origin + Vector2((pt.x + edge_data[1].x) * tile_sz, (pt.y + edge_data[1].y) * tile_sz)
-						var e2 = origin + Vector2((pt.x + edge_data[2].x) * tile_sz, (pt.y + edge_data[2].y) * tile_sz)
-						map_viewport.draw_line(e1, e2, power_border_col, 1.5)
+				map_viewport.draw_rect(Rect2(pt_pos, Vector2(tile_sz, tile_sz)), power_col, true)
+			for edge in area_data.edges:
+				var e1 = origin + edge[0] * tile_sz
+				var e2 = origin + edge[1] * tile_sz
+				map_viewport.draw_line(e1, e2, power_border_col, 1.5)
 
-	# 6. Units
+	# 6. Units (Culled)
 	for u in units.units:
 		if u.hp <= 0: continue
+		if not vis_world_rect.has_point(u.world_pos):
+			continue
 		var u_pos = origin + u.world_pos * map_zoom
 		var u_sz = Vector2(34, 34) * map_zoom
 		
