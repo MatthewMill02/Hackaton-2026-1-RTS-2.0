@@ -66,6 +66,7 @@ var active_settings_modal: SettingsModal = null
 var active_production_modal: BuildingProductionModal = null
 var active_lab_modal: LabResearchModal = null
 var scoreboard_overlay: ScoreboardModal = null
+var building_card_popup: PanelContainer = null
 var snapshot_timer: float = 0.0
 
 func _init(p_net: NetworkManager = null, p_settings: SettingsManager = null, p_map: MapData = null) -> void:
@@ -404,7 +405,224 @@ func _build_left_construction_panel() -> void:
 		
 		var b_id = item.id
 		btn.pressed.connect(func(): _on_build_selected(b_id))
+		btn.mouse_entered.connect(func(): _show_building_card(b_id, btn.global_position))
+		btn.mouse_exited.connect(_hide_building_card)
 		bvbox.add_child(btn)
+
+func _show_building_card(b_id: String, btn_pos: Vector2) -> void:
+	_hide_building_card()
+	
+	building_card_popup = PanelContainer.new()
+	building_card_popup.custom_minimum_size = Vector2(340, 0)
+	var sb = UITheme.create_panel_style(
+		Color(0.03, 0.06, 0.12, 0.98),
+		UITheme.COLOR_ACCENT_CYAN,
+		6, 2, 12
+	)
+	building_card_popup.add_theme_stylebox_override("panel", sb)
+	building_card_popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(building_card_popup)
+	
+	# Position to the right of the left construction menu
+	var card_x = btn_pos.x + 184.0
+	var card_y = clampf(btn_pos.y - 20.0, 75.0, get_viewport_rect().size.y - 280.0)
+	building_card_popup.global_position = Vector2(card_x, card_y)
+	
+	var cvbox = VBoxContainer.new()
+	cvbox.add_theme_constant_override("separation", 8)
+	building_card_popup.add_child(cvbox)
+	
+	if b_id == "DEMOLISH":
+		var h_title = Label.new()
+		h_title.text = "💥 WYBURZANIE STRUKTURY"
+		h_title.add_theme_font_size_override("font_size", 16)
+		h_title.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_RED)
+		cvbox.add_child(h_title)
+		
+		var d_desc = Label.new()
+		d_desc.text = "Kliknij LPM na dowolnym własnym budynku, aby go zdemontować.\n\n💰 Zwraca 50% zainwestowanych surowców bezpośrednio do magazynu."
+		d_desc.add_theme_font_size_override("font_size", 13)
+		d_desc.add_theme_color_override("font_color", UITheme.COLOR_TEXT_LIGHT)
+		d_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		cvbox.add_child(d_desc)
+		return
+		
+	var def = buildings.get_def(b_id)
+	if def == null: return
+	
+	# --- 1. HEADER ROW: Image Preview + Name + Category ---
+	var h_row = HBoxContainer.new()
+	h_row.add_theme_constant_override("separation", 10)
+	cvbox.add_child(h_row)
+	
+	var img_panel = PanelContainer.new()
+	img_panel.custom_minimum_size = Vector2(56, 56)
+	var img_sb = UITheme.create_panel_style(Color(0.06, 0.12, 0.20, 0.95), UITheme.COLOR_ACCENT_CYAN, 4, 1, 6)
+	img_panel.add_theme_stylebox_override("panel", img_sb)
+	h_row.add_child(img_panel)
+	
+	var tex = buildings.textures_cache.get(b_id, null)
+	if tex == null:
+		var tex_path = "res://public/sprites/buildings/%s.png" % def.sprite_key
+		tex = UITheme.load_texture_safe(tex_path)
+		
+	if tex != null:
+		var trect = TextureRect.new()
+		trect.texture = tex
+		trect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		trect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		trect.custom_minimum_size = Vector2(48, 48)
+		trect.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		trect.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		img_panel.add_child(trect)
+	else:
+		var ico_lbl = Label.new()
+		ico_lbl.text = "🏛️"
+		ico_lbl.add_theme_font_size_override("font_size", 28)
+		ico_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		ico_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		img_panel.add_child(ico_lbl)
+		
+	var title_vbox = VBoxContainer.new()
+	title_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_vbox.add_theme_constant_override("separation", 2)
+	h_row.add_child(title_vbox)
+	
+	var name_lbl = Label.new()
+	name_lbl.text = def.name
+	name_lbl.add_theme_font_size_override("font_size", 16)
+	name_lbl.add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD)
+	title_vbox.add_child(name_lbl)
+	
+	var cat_str = "ROZMIAR %dx%d · %d HP" % [def.size.x, def.size.y, def.max_hp]
+	var cat_lbl = Label.new()
+	cat_lbl.text = "%s (%s)" % [def.category, cat_str]
+	cat_lbl.add_theme_font_size_override("font_size", 11)
+	cat_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+	title_vbox.add_child(cat_lbl)
+	
+	# Separator
+	var sep1 = HSeparator.new()
+	sep1.add_theme_stylebox_override("separator", UITheme.create_panel_style(Color(0.14, 0.28, 0.44, 0.5), Color.TRANSPARENT, 0, 0, 1))
+	cvbox.add_child(sep1)
+	
+	# --- 2. KOSZT BUDOWY ---
+	var cost_vbox = VBoxContainer.new()
+	cost_vbox.add_theme_constant_override("separation", 3)
+	cvbox.add_child(cost_vbox)
+	
+	var c_title = Label.new()
+	c_title.text = "💰 KOSZT BUDOWY:"
+	c_title.add_theme_font_size_override("font_size", 11)
+	c_title.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+	cost_vbox.add_child(c_title)
+	
+	var cost_row = HBoxContainer.new()
+	cost_row.add_theme_constant_override("separation", 10)
+	cost_vbox.add_child(cost_row)
+	
+	var cost_dict = def.cost
+	var res_icons = {
+		"stone": {"name": "Kamień", "icon": "🪨", "have": economy.stone},
+		"iron": {"name": "Żelazo", "icon": "⚙️", "have": economy.iron},
+		"oil": {"name": "Ropa", "icon": "🛢️", "have": economy.oil},
+		"redstone": {"name": "Czerwienit", "icon": "🔴", "have": economy.redstone}
+	}
+	
+	var has_cost = false
+	for r_key in ["stone", "iron", "oil", "redstone"]:
+		var req = cost_dict.get(r_key, 0)
+		if req > 0:
+			has_cost = true
+			var r_info = res_icons[r_key]
+			var enough = (r_info.have >= req)
+			var r_lbl = Label.new()
+			r_lbl.text = "%s %d" % [r_info.icon, req]
+			r_lbl.add_theme_font_size_override("font_size", 12)
+			r_lbl.add_theme_color_override("font_color", UITheme.COLOR_SUCCESS_GREEN if enough else UITheme.COLOR_ACCENT_RED)
+			cost_row.add_child(r_lbl)
+			
+	if not has_cost:
+		var free_lbl = Label.new()
+		free_lbl.text = "Darmowe (0)"
+		free_lbl.add_theme_font_size_override("font_size", 12)
+		free_lbl.add_theme_color_override("font_color", UITheme.COLOR_SUCCESS_GREEN)
+		cost_row.add_child(free_lbl)
+		
+	# --- 3. BILANS ENERGETYCZNY & STATYSTYKI ---
+	var stats_vbox = VBoxContainer.new()
+	stats_vbox.add_theme_constant_override("separation", 2)
+	cvbox.add_child(stats_vbox)
+	
+	if def.power_generation > 0:
+		var p_lbl = Label.new()
+		p_lbl.text = "⚡ Produkcja energii: +%d kW" % def.power_generation
+		p_lbl.add_theme_font_size_override("font_size", 12)
+		p_lbl.add_theme_color_override("font_color", UITheme.COLOR_SUCCESS_GREEN)
+		stats_vbox.add_child(p_lbl)
+		
+	if def.power_draw_active > 0:
+		var p_lbl = Label.new()
+		p_lbl.text = "⚡ Zużycie prądu: -%d kW (Aktywne) / -%d kW (Czuwanie)" % [def.power_draw_active, def.power_draw_standby]
+		p_lbl.add_theme_font_size_override("font_size", 12)
+		p_lbl.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_ORANGE)
+		stats_vbox.add_child(p_lbl)
+	elif def.power_generation == 0 and def.power_draw_active == 0:
+		var p_lbl = Label.new()
+		p_lbl.text = "⚡ Zużycie prądu: Brak (0 kW)"
+		p_lbl.add_theme_font_size_override("font_size", 12)
+		p_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+		stats_vbox.add_child(p_lbl)
+		
+	if def.battery_capacity_bonus > 0:
+		var b_lbl = Label.new()
+		b_lbl.text = "🔋 Pojemność baterii: +%d kJ" % def.battery_capacity_bonus
+		b_lbl.add_theme_font_size_override("font_size", 12)
+		b_lbl.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
+		stats_vbox.add_child(b_lbl)
+		
+	if def.storage_bonus > 0:
+		var s_lbl = Label.new()
+		s_lbl.text = "📦 Pojemność magazynu bazy: +%d jedn." % def.storage_bonus
+		s_lbl.add_theme_font_size_override("font_size", 12)
+		s_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_LIGHT)
+		stats_vbox.add_child(s_lbl)
+		
+	if def.ammo_cost_iron > 0:
+		var a_lbl = Label.new()
+		a_lbl.text = "🎯 Amunicja: 1 Żelazo / pocisk (Szybkostrzelność: 0.25s)"
+		a_lbl.add_theme_font_size_override("font_size", 12)
+		a_lbl.add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD)
+		stats_vbox.add_child(a_lbl)
+		
+	# --- 4. OPIS TAKTYCZNY ---
+	var desc_lbl = Label.new()
+	var desc_text = ""
+	match b_id:
+		"stone_mine": desc_text = "Wymaga postawienia na złożu kamienia. Drony wydobywają surowiec i transportują do Kwatery."
+		"iron_mine": desc_text = "Wymaga postawienia na złożu żelaza. Kluczowe źródło metalu do budowy i amunicji."
+		"oil_pump": desc_text = "Wymaga postawienia na złożu ropy. Paliwo do fabryk i jednostek zmechanizowanych."
+		"redstone_mine": desc_text = "Wymaga postawienia na złożu czerwienitu. Niezbędny do technologii i zaawansowanych baterii."
+		"pylon": desc_text = "Przesyła prąd i rozszerza pole zasilania bazy o 3 kratki w każdym kierunku."
+		"power_plant": desc_text = "Wytwarza 100 kW stabilnej energii dla całej bazy i struktur obronnych."
+		"battery": desc_text = "Magazynuje nadwyżki energii (500 kJ) na wypadek przeciążenia sieci."
+		"factory": desc_text = "Produkuje roboty bojowe (Scoutbot, EMP Drone, Terminus Titan). Posiada ruchome okno produkcyjne."
+		"storage": desc_text = "Zwiększa maksymalną pojemność każdego zebranych surowców o 500 jednostek."
+		"wall": desc_text = "Solidna przeszkoda terenowa o wysokiej wytrzymałości (600 HP)."
+		"turret": desc_text = "Szybki laser obronny. Atakuje wrogie jednostki i struktury w zasięgu 3 kratek (1 pocisk/0.25s)."
+		"lab": desc_text = "Centrum badań i ulepszeń. Pozwala tworzyć, odkrywać i sprzedawać karty technologiczne."
+		_: desc_text = "Struktura budowlana."
+		
+	desc_lbl.text = desc_text
+	desc_lbl.add_theme_font_size_override("font_size", 11)
+	desc_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_LIGHT)
+	desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	cvbox.add_child(desc_lbl)
+
+func _hide_building_card() -> void:
+	if building_card_popup != null and is_instance_valid(building_card_popup):
+		building_card_popup.queue_free()
+		building_card_popup = null
 
 func _build_in_game_chat_overlay() -> void:
 	var chat_box = PanelContainer.new()
