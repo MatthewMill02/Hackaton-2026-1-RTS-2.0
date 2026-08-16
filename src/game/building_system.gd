@@ -44,6 +44,30 @@ var building_instances: Array = []
 var next_instance_id: int = 1
 var textures_cache: Dictionary = {}
 
+var free_stone_mines_left: Dictionary = {} # slot: int -> int (defaults to 2)
+var free_iron_mines_left: Dictionary = {} # slot: int -> int (defaults to 2)
+
+func get_free_stone_mines_left(slot: int) -> int:
+	return free_stone_mines_left.get(slot, 2)
+
+func get_free_iron_mines_left(slot: int) -> int:
+	return free_iron_mines_left.get(slot, 2)
+
+func get_effective_cost(def_id: String, slot: int) -> Dictionary:
+	var def = get_def(def_id)
+	if def == null: return {}
+	if def_id == "stone_mine" and get_free_stone_mines_left(slot) > 0:
+		return {}
+	elif def_id == "iron_mine" and get_free_iron_mines_left(slot) > 0:
+		return {}
+	return def.cost
+
+func consume_free_mine_if_applicable(def_id: String, slot: int) -> void:
+	if def_id == "stone_mine" and get_free_stone_mines_left(slot) > 0:
+		free_stone_mines_left[slot] = get_free_stone_mines_left(slot) - 1
+	elif def_id == "iron_mine" and get_free_iron_mines_left(slot) > 0:
+		free_iron_mines_left[slot] = get_free_iron_mines_left(slot) - 1
+
 const POWER_GRID_HQ_RADIUS: int = 4  # tiles
 const POWER_GRID_PYLON_RADIUS: int = 3  # tiles
 
@@ -271,8 +295,11 @@ func place_building(
 		if not validation.valid:
 			return null
 		
-		if not economy.spend_resources(def.cost):
+		var effective_cost = get_effective_cost(def_id, player_slot)
+		if not economy.spend_resources(effective_cost):
 			return null
+			
+		consume_free_mine_if_applicable(def_id, player_slot)
 		
 	# Replace wall if wall turret
 	if def.wall_mounted:
@@ -302,7 +329,7 @@ func place_building(
 	inst.storage_bonus = def.storage_bonus
 	inst.battery_capacity_bonus = def.battery_capacity_bonus
 	inst.sprite_texture = textures_cache.get(def.id, null)
-	# Starting free buildings (HQ, free starter mines) are instant (100%), other buildings start as blueprints (0.0%)
+	# Starting free buildings (HQ) are instant (100%), other buildings start as blueprints (0.0%)
 	inst.build_progress = 1.0 if skip_validation else 0.0
 	
 	building_instances.append(inst)
@@ -317,6 +344,8 @@ func spawn_remote_building(def_id: String, grid_pos: Vector2i, player_slot: int,
 			
 	var def = get_def(def_id)
 	if def == null: return null
+	
+	consume_free_mine_if_applicable(def_id, player_slot)
 	
 	# Replace wall if wall turret
 	if def.wall_mounted:

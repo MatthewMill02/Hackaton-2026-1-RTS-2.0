@@ -80,6 +80,7 @@ var minimap_tick_timer: float = 0.0
 var power_mesh_dirty: bool = true
 var cached_power_cables: Array = []
 var cached_power_areas: Dictionary = {}
+var build_buttons_dict: Dictionary = {}
 
 func _init(p_net: NetworkManager = null, p_settings: SettingsManager = null, p_map: MapData = null) -> void:
 	network_manager = p_net
@@ -148,39 +149,11 @@ func _ready() -> void:
 
 func _spawn_starting_entities() -> void:
 	for b_spawn in active_map.bases:
-		var base_center = Vector2(b_spawn.grid_pos.x + 1.0, b_spawn.grid_pos.y + 1.0)
-		
 		# 1. Spawn Starting HQ on grid with deterministic ID
 		var hq_id = b_spawn.slot * 10000 + 1
 		var _hq_inst = buildings.place_building("hq", b_spawn.grid_pos, b_spawn.slot, active_map, economy, true, hq_id)
 		
-		# 2. Spawn 2 Free Starting Stone Mines and 2 Free Iron Mines on near resource deposits
-		var base_stone_nodes: Array = []
-		var base_iron_nodes: Array = []
-		for r in active_map.resources:
-			var d = base_center.distance_to(Vector2(r.grid_pos.x, r.grid_pos.y))
-			if d <= 8.0:
-				if r.type == MapData.ResourceType.STONE:
-					base_stone_nodes.append(r)
-				elif r.type == MapData.ResourceType.IRON:
-					base_iron_nodes.append(r)
-					
-		base_stone_nodes.sort_custom(func(a, b): return base_center.distance_to(Vector2(a.grid_pos.x, a.grid_pos.y)) < base_center.distance_to(Vector2(b.grid_pos.x, b.grid_pos.y)))
-		base_iron_nodes.sort_custom(func(a, b): return base_center.distance_to(Vector2(a.grid_pos.x, a.grid_pos.y)) < base_center.distance_to(Vector2(b.grid_pos.x, b.grid_pos.y)))
-		
-		# Place 2 starter Stone Mines
-		for s_idx in range(mini(2, base_stone_nodes.size())):
-			var s_node = base_stone_nodes[s_idx]
-			var s_id = b_spawn.slot * 10000 + 10 + s_idx
-			buildings.place_building("stone_mine", s_node.grid_pos, b_spawn.slot, active_map, economy, true, s_id)
-			
-		# Place 2 starter Iron Mines
-		for i_idx in range(mini(2, base_iron_nodes.size())):
-			var i_node = base_iron_nodes[i_idx]
-			var i_id = b_spawn.slot * 10000 + 20 + i_idx
-			buildings.place_building("iron_mine", i_node.grid_pos, b_spawn.slot, active_map, economy, true, i_id)
-		
-		# 3. Spawn starting Worker Drone next to HQ with deterministic ID
+		# 2. Spawn starting Worker Drone next to HQ with deterministic ID
 		var spawn_pos = Vector2((b_spawn.grid_pos.x + 2.0) * TILE_PX, (b_spawn.grid_pos.y + 2.0) * TILE_PX)
 		var drone_id = b_spawn.slot * 10000 + 1
 		var drone = units.spawn_unit("worker_drone", b_spawn.slot, spawn_pos, drone_id)
@@ -464,10 +437,29 @@ func _build_left_construction_panel() -> void:
 		UITheme.style_button(btn, base_col, accent, 32, 14)
 		
 		var b_id = item.id
+		build_buttons_dict[b_id] = btn
 		btn.pressed.connect(func(): _on_build_selected(b_id))
 		btn.mouse_entered.connect(func(): _show_building_card(b_id, btn.global_position))
 		btn.mouse_exited.connect(_hide_building_card)
 		bvbox.add_child(btn)
+		
+	_update_build_button_labels()
+
+func _update_build_button_labels() -> void:
+	if buildings == null: return
+	if build_buttons_dict.has("stone_mine"):
+		var free_s = buildings.get_free_stone_mines_left(local_slot)
+		if free_s > 0:
+			build_buttons_dict["stone_mine"].text = "🪨 Kopalnia (%d DARMOWE)" % free_s
+		else:
+			build_buttons_dict["stone_mine"].text = "🪨 Kopalnia Kamienia"
+			
+	if build_buttons_dict.has("iron_mine"):
+		var free_i = buildings.get_free_iron_mines_left(local_slot)
+		if free_i > 0:
+			build_buttons_dict["iron_mine"].text = "⚙️ Kopalnia (%d DARMOWE)" % free_i
+		else:
+			build_buttons_dict["iron_mine"].text = "⚙️ Kopalnia Żelaza"
 
 func _show_building_card(b_id: String, btn_pos: Vector2) -> void:
 	_hide_building_card()
@@ -581,7 +573,7 @@ func _show_building_card(b_id: String, btn_pos: Vector2) -> void:
 	cost_row.add_theme_constant_override("separation", 10)
 	cost_vbox.add_child(cost_row)
 	
-	var cost_dict = def.cost
+	var cost_dict = buildings.get_effective_cost(b_id, local_slot)
 	var res_icons = {
 		"stone": {"name": "Kamień", "icon": "🪨", "have": economy.stone},
 		"iron": {"name": "Żelazo", "icon": "⚙️", "have": economy.iron},
@@ -604,9 +596,16 @@ func _show_building_card(b_id: String, btn_pos: Vector2) -> void:
 			
 	if not has_cost:
 		var free_lbl = Label.new()
-		free_lbl.text = "Darmowe (0)"
+		if b_id == "stone_mine":
+			var count = buildings.get_free_stone_mines_left(local_slot)
+			free_lbl.text = "✨ DARMOWA KOPALNIA (Pozostało: %d/2)" % count
+		elif b_id == "iron_mine":
+			var count = buildings.get_free_iron_mines_left(local_slot)
+			free_lbl.text = "✨ DARMOWA KOPALNIA (Pozostało: %d/2)" % count
+		else:
+			free_lbl.text = "Darmowe (0)"
 		free_lbl.add_theme_font_size_override("font_size", 12)
-		free_lbl.add_theme_color_override("font_color", UITheme.COLOR_SUCCESS_GREEN)
+		free_lbl.add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD if (b_id in ["stone_mine", "iron_mine"]) else UITheme.COLOR_SUCCESS_GREEN)
 		cost_row.add_child(free_lbl)
 		
 	# --- 3. BILANS ENERGETYCZNY & STATYSTYKI ---
@@ -1431,7 +1430,8 @@ func _on_map_draw() -> void:
 			var p_rect = Rect2(p_world, Vector2(def.size.x * tile_sz, def.size.y * tile_sz))
 			
 			var val = buildings.is_position_valid_for_building(active_placing_def_id, g_pos, local_slot, active_map)
-			var can_buy = economy.can_afford(def.cost)
+			var effective_cost = buildings.get_effective_cost(active_placing_def_id, local_slot)
+			var can_buy = economy.can_afford(effective_cost)
 			var is_ok = val.valid and can_buy
 			
 			var preview_col = Color(0.2, 0.9, 0.4, 0.4) if is_ok else Color(0.9, 0.2, 0.2, 0.4)
@@ -1649,8 +1649,8 @@ func _on_map_gui_input(event: InputEvent) -> void:
 		elif event.button_index == MOUSE_BUTTON_LEFT:
 			if event.pressed:
 				if not active_placing_def_id.is_empty():
-					var def = buildings.get_def(active_placing_def_id)
-					if def != null and not economy.can_afford(def.cost):
+					var effective_cost = buildings.get_effective_cost(active_placing_def_id, local_slot)
+					if not economy.can_afford(effective_cost):
 						_show_floating_mouse_alert("⚠️ ZA DROGO!", event.position, UITheme.COLOR_ACCENT_RED)
 						in_game_chat_log.append_text("[color=#ff4655]⚠️ Za drogo! Brakuje surowców na postawienie tego budynku![/color]\n")
 					else:
@@ -1660,7 +1660,8 @@ func _on_map_gui_input(event: InputEvent) -> void:
 						else:
 							var placed = buildings.place_building(active_placing_def_id, hover_grid_pos, local_slot, active_map, economy)
 							if placed != null:
-								_animate_resource_deductions(def.cost)
+								_animate_resource_deductions(effective_cost)
+								_update_build_button_labels()
 								var pts = _get_building_score_points(placed.def_id)
 								_add_score(pts, "Postawiono: %s (+%d pkt)" % [placed.name, pts])
 								in_game_chat_log.append_text("[color=#00f0ff]Postawiono: [b]%s[/b] (+%d pkt do zwycięstwa)[/color]\n" % [placed.name, pts])
