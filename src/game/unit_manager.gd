@@ -3,6 +3,7 @@ class_name UnitManager
 extends RefCounted
 
 signal unit_killed_reward(stone: int, iron: int, oil: int, redstone: int)
+signal unit_training_completed(def_id: String, building_id: int, slot: int, spawn_pos: Vector2)
 
 enum UnitState { IDLE, MOVING, MOVING_TO_RESOURCE, MINING, RETURNING_TO_HQ, ATTACKING, CONSTRUCTING }
 
@@ -19,6 +20,15 @@ class UnitDef:
 	var unit_type: String
 	var sprite_prefix: String
 	var collision_radius: float = 12.0
+	var train_time: float = 10.0
+
+class TrainingQueueEntry:
+	var def_id: String
+	var building_id: int
+	var slot: int
+	var progress: float = 0.0
+	var total_time: float = 10.0
+	var cost: Dictionary = {}
 
 class UnitInstance:
 	var instance_id: int
@@ -54,21 +64,24 @@ var definitions: Dictionary = {}
 var units: Array = []
 var next_unit_id: int = 1
 var textures_cache: Dictionary = {}
+var training_queue: Array = [] # Array of TrainingQueueEntry
+
+const MAX_QUEUE_PER_BUILDING: int = 5
 
 func _init() -> void:
 	_register_definitions()
 
 func _register_definitions() -> void:
-	_add_def("worker_drone", "Dron Konstrukcyjny", 100, 140.0, 5, 32.0, 1.0, 0, {"iron": 30, "oil": 10}, "WORKER", "unit_worker", 12.0)
-	_add_def("scout_bot", "Scoutbot", 120, 180.0, 15, 96.0, 0.8, 0, {"iron": 50, "oil": 20}, "SCOUT", "unit_scout", 14.0)
-	_add_def("terminus_bot", "Terminus", 1500, 70.0, 80, 80.0, 1.8, 0, {"iron": 300, "oil": 150, "redstone": 50}, "SUPER", "unit_behemoth", 24.0)
-	_add_def("emp_drone", "Dron EMP", 180, 160.0, 30, 48.0, 1.0, 0, {"iron": 90, "oil": 40, "redstone": 15}, "EMP", "unit_emp", 13.0)
+	_add_def("worker_drone", "Dron Konstrukcyjny", 100, 140.0, 5, 32.0, 1.0, 0, {"iron": 40}, "WORKER", "unit_worker", 12.0, 8.0)
+	_add_def("scout_bot", "Scoutbot", 120, 180.0, 15, 96.0, 0.8, 0, {"iron": 60, "stone": 20}, "SCOUT", "unit_scout", 14.0, 12.0)
+	_add_def("terminus_bot", "Terminus", 1500, 70.0, 80, 80.0, 1.8, 0, {"iron": 350, "oil": 180, "redstone": 60}, "SUPER", "unit_behemoth", 24.0, 30.0)
+	_add_def("emp_drone", "Dron EMP", 180, 160.0, 30, 48.0, 1.0, 0, {"iron": 100, "oil": 50, "redstone": 20}, "EMP", "unit_emp", 13.0, 15.0)
 
 func _add_def(
 	p_id: String, p_name: String, p_hp: int, p_speed: float,
 	p_dmg: int, p_range: float, p_cd: float, p_gather: int,
 	p_cost: Dictionary, p_type: String, p_prefix: String,
-	p_collision_radius: float = 12.0
+	p_collision_radius: float = 12.0, p_train_time: float = 10.0
 ) -> void:
 	var d = UnitDef.new()
 	d.id = p_id
@@ -83,6 +96,7 @@ func _add_def(
 	d.unit_type = p_type
 	d.sprite_prefix = p_prefix
 	d.collision_radius = p_collision_radius
+	d.train_time = p_train_time
 	definitions[p_id] = d
 	
 	# Cache player slot variations (p0..p3)
@@ -582,3 +596,82 @@ func apply_units_snapshot(slot: int, snapshot: Array) -> void:
 			u.hp = data.get("hp", u.hp)
 			u.carried_type = data.get("ct", u.carried_type)
 			u.carried_amount = data.get("ca", u.carried_amount)
+
+# ==============================================================================
+# Training Queue System
+# ==============================================================================
+
+func queue_unit_training(def_id: String, building_id: int, slot: int) -> bool:
+	var def = definitions.get(def_id, null)
+	if def == null: return false
+	
+	# Check per-building queue limit
+	var count = 0
+	for entry in training_queue:
+		if entry.building_id == building_id:
+			count += 1
+	if count >= MAX_QUEUE_PER_BUILDING:
+		return false
+	
+	var entry = TrainingQueueEntry.new()
+	entry.def_id = def_id
+	entry.building_id = building_id
+	entry.slot = slot
+	entry.progress = 0.0
+	entry.total_time = def.train_time
+	entry.cost = def.cost.duplicate()
+	training_queue.append(entry)
+	return true
+
+func get_queue_for_building(building_id: int) -> Array:
+	var result: Array = []
+	for entry in training_queue:
+		if entry.building_id == building_id:
+			result.append(entry)
+	return result
+
+func cancel_queue_entry(entry: TrainingQueueEntry, economy: EconomyManager) -> void:
+	# Refund 100% of resources
+	for r_key in entry.cost:
+		var amount = entry.cost[r_key]
+		match r_key:
+			"stone": economy.stone = mini(economy.stone + amount, economy.max_storage)
+			"iron": economy.iron = mini(economy.iron + amount, economy.max_storage)
+			"oil": economy.oil = mini(economy.oil + amount, economy.max_storage)
+			"redstone": economy.redstone = mini(economy.redstone + amount, economy.max_storage)
+	training_queue.erase(entry)
+
+func update_training_queue(delta: float, buildings: Array, tile_px: float) -> void:
+	# Track which buildings are already being advanced this tick
+	var advanced_buildings: Dictionary = {}
+	
+	# Process queue entries in order (first entry per building is the active one)
+	var completed: Array = []
+	for entry in training_queue:
+		if advanced_buildings.has(entry.building_id):
+			continue # Only the first entry per building progresses
+		
+		# Check if the building still exists and is operational
+		var building_alive = false
+		var building_ref: BuildingSystem.BuildingInstance = null
+		for b in buildings:
+			if b.instance_id == entry.building_id and b.hp > 0 and b.build_progress >= 1.0 and b.emp_overload_timer <= 0.0:
+				building_alive = true
+				building_ref = b
+				break
+		
+		if not building_alive:
+			continue
+		
+		advanced_buildings[entry.building_id] = true
+		entry.progress += delta
+		
+		if entry.progress >= entry.total_time:
+			# Training complete — spawn the unit
+			var spawn_pos = Vector2((building_ref.grid_pos.x + building_ref.size.x + 0.5) * tile_px, (building_ref.grid_pos.y + 0.5) * tile_px)
+			completed.append(entry)
+			unit_training_completed.emit(entry.def_id, entry.building_id, entry.slot, spawn_pos)
+	
+	for entry in completed:
+		training_queue.erase(entry)
+

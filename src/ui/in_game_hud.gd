@@ -120,6 +120,7 @@ func _ready() -> void:
 	combat.turret_fired.connect(_on_local_turret_fired)
 	combat.unit_killed_reward.connect(_on_unit_killed_reward)
 	units.unit_killed_reward.connect(_on_unit_killed_reward)
+	units.unit_training_completed.connect(_on_training_completed)
 	research.card_obtained.connect(_on_card_obtained)
 	research.card_revealed.connect(_on_card_revealed)
 	research.card_sold.connect(_on_card_sold)
@@ -231,6 +232,7 @@ func _process(delta: float) -> void:
 		buildings.update_timers(delta, local_slot, research)
 		economy.update_grid(delta, buildings.building_instances, local_slot, research)
 		units.update_units(delta, active_map, buildings.building_instances, economy, TILE_PX, local_slot, research)
+		units.update_training_queue(delta, buildings.building_instances, TILE_PX)
 		combat.update_combat(delta, buildings.building_instances, units.units, active_map, economy, TILE_PX, local_slot, research)
 		
 		# Bot AI Update (Host / Server / Offline authority)
@@ -2227,14 +2229,19 @@ func _on_card_sold(_item: ResearchSystem.CardItem) -> void:
 	_update_resource_labels()
 
 func _on_unit_trained(def_id: String, building: BuildingSystem.BuildingInstance) -> void:
-	var raw_spawn_pos = Vector2((building.grid_pos.x + building.size.x + 0.5) * TILE_PX, (building.grid_pos.y + 0.5) * TILE_PX)
-	var u = units.spawn_unit(def_id, building.slot, raw_spawn_pos)
+	# Now called from production modal — just queues the training instead of instant spawn
+	pass
+
+func _on_training_completed(def_id: String, building_id: int, slot: int, spawn_pos: Vector2) -> void:
+	var u = units.spawn_unit(def_id, slot, spawn_pos)
 	if u != null:
-		in_game_chat_log.append_text("[color=#00f0ff]Wyprodukowano: [b]%s[/b][/color]\n" % u.name)
-		if network_manager != null:
-			network_manager.send_unit_spawn(def_id, building.slot, u.instance_id, u.world_pos)
+		if slot == local_slot:
+			in_game_chat_log.append_text("[color=#00f0ff]Wyprodukowano: [b]%s[/b][/color]\n" % u.name)
+			if network_manager != null:
+				network_manager.send_unit_spawn(def_id, slot, u.instance_id, u.world_pos)
 		map_viewport.queue_redraw()
-		_update_resource_labels()
+		if slot == local_slot:
+			_update_resource_labels()
 
 func _toggle_esc_settings_modal() -> void:
 	if active_settings_modal != null and is_instance_valid(active_settings_modal):

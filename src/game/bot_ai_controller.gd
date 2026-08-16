@@ -170,16 +170,16 @@ func _try_build_turret(bot: BotInstance, map_data: MapData, buildings: BuildingS
 						return
 
 func _try_train_unit(bot: BotInstance, buildings: BuildingSystem, unit_mgr: UnitManager, tile_px: float) -> void:
-	# Find bot HQ
+	# Find bot HQ and Factory
 	var hq: BuildingSystem.BuildingInstance = null
+	var factory: BuildingSystem.BuildingInstance = null
 	for b in buildings.building_instances:
-		if b.slot == bot.slot and b.hp > 0 and b.def_id == "hq":
-			hq = b
-			break
-			
-	if hq == null:
-		return
-		
+		if b.slot == bot.slot and b.hp > 0 and b.build_progress >= 1.0:
+			if b.def_id == "hq" and hq == null:
+				hq = b
+			elif b.def_id == "factory" and factory == null:
+				factory = b
+				
 	# Select unit type based on difficulty
 	var unit_pool = ["scout_bot"]
 	if bot.difficulty >= 2:
@@ -191,10 +191,30 @@ func _try_train_unit(bot: BotInstance, buildings: BuildingSystem, unit_mgr: Unit
 		unit_pool.append("scout_bot")
 		
 	var chosen_type = unit_pool.pick_random()
-	var spawn_pos = Vector2((hq.grid_pos.x + 2.5) * tile_px, (hq.grid_pos.y + 2.5) * tile_px)
-	var u = unit_mgr.spawn_unit(chosen_type, bot.slot, spawn_pos)
-	if u != null:
-		bot.current_status = "Tworzy jednostkę (%s)" % u.name
+	
+	# Determine which building to use
+	var target_building: BuildingSystem.BuildingInstance = null
+	if chosen_type == "worker_drone":
+		target_building = hq
+	else:
+		target_building = factory if factory != null else null
+	
+	# Also queue worker drones from HQ sometimes
+	if target_building == null and hq != null and chosen_type == "worker_drone":
+		target_building = hq
+	
+	if target_building == null:
+		return
+	
+	# Check queue limit
+	var queue_count = unit_mgr.get_queue_for_building(target_building.instance_id).size()
+	if queue_count >= unit_mgr.MAX_QUEUE_PER_BUILDING:
+		return
+	
+	if unit_mgr.queue_unit_training(chosen_type, target_building.instance_id, bot.slot):
+		var u_def = unit_mgr.definitions.get(chosen_type, null)
+		bot.current_status = "Trenuje: %s" % (u_def.name if u_def else chosen_type)
+
 
 func _update_bot_units_ai(
 	bot: BotInstance,

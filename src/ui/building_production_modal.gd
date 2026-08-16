@@ -19,6 +19,8 @@ var is_minimized: bool = false
 var minimize_btn: Button
 var body_vbox: VBoxContainer
 var status_lbl: Label
+var queue_container: VBoxContainer = null
+var refresh_timer: float = 0.0
 
 func _init(
 	p_building: BuildingSystem.BuildingInstance,
@@ -42,6 +44,13 @@ func _ready() -> void:
 	var vp_size = get_viewport_rect().size
 	position = Vector2(maxf(40, vp_size.x * 0.5 - 230), maxf(80, vp_size.y * 0.5 - 220))
 	_build_content()
+
+func _process(delta: float) -> void:
+	refresh_timer += delta
+	if refresh_timer >= 0.25:
+		refresh_timer = 0.0
+		_refresh_queue_display()
+		_refresh_buttons()
 
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:
@@ -126,6 +135,17 @@ func _build_content() -> void:
 	div.color = Color(0.15, 0.28, 0.44, 0.7)
 	body_vbox.add_child(div)
 	
+	# === TRAINING QUEUE DISPLAY ===
+	queue_container = VBoxContainer.new()
+	queue_container.add_theme_constant_override("separation", 6)
+	body_vbox.add_child(queue_container)
+	_refresh_queue_display()
+	
+	var div2 = ColorRect.new()
+	div2.custom_minimum_size = Vector2(0, 1)
+	div2.color = Color(0.15, 0.28, 0.44, 0.5)
+	body_vbox.add_child(div2)
+	
 	# Production List
 	var units_list: Array = []
 	if target_building.def_id == "hq":
@@ -134,8 +154,8 @@ func _build_content() -> void:
 				"id": "worker_drone",
 				"name": "Dron Konstrukcyjny",
 				"desc": "Szybki dron budowlany. Wznosi i stawia budynki bazy.",
-				"stats": "HP: 100 · Szybkość: 140",
-				"cost_text": "⚙️ 30 Żelazo  🛢️ 10 Ropa"
+				"stats": "HP: 100 · Szybkość: 140 · Czas: 8s",
+				"cost_text": "⚙️ 40 Żelazo  🛢️ 15 Ropa"
 			}
 		]
 	elif target_building.def_id == "factory":
@@ -144,22 +164,22 @@ func _build_content() -> void:
 				"id": "scout_bot",
 				"name": "Scoutbot",
 				"desc": "Standardowa szybka jednostka bojowa. Skuteczna w patrolach i nękaniu wroga.",
-				"stats": "HP: 120 · Atak: 15 · Zasięg: 96px · Szybkość: 180",
-				"cost_text": "⚙️ 50 Żelazo  🛢️ 20 Ropa"
+				"stats": "HP: 120 · Atak: 15 · Zasięg: 96px · Szybkość: 180 · Czas: 12s",
+				"cost_text": "⚙️ 60 Żelazo  🛢️ 25 Ropa"
 			},
 			{
 				"id": "terminus_bot",
 				"name": "Terminus",
 				"desc": "Wielki, ciężki i silnie opancerzony robot bitewny. Miażdżąca siła ognia.",
-				"stats": "HP: 1500 · Atak: 80 · Zasięg: 80px · Szybkość: 70",
-				"cost_text": "⚙️ 300 Żelazo  🛢️ 150 Ropa  🔴 50 Czerwienit"
+				"stats": "HP: 1500 · Atak: 80 · Zasięg: 80px · Szybkość: 70 · Czas: 30s",
+				"cost_text": "⚙️ 350 Żelazo  🛢️ 180 Ropa  🔴 60 Czerwienit"
 			},
 			{
 				"id": "emp_drone",
 				"name": "Dron EMP",
-				"desc": "Dron kamikadze. Wybucha na 2 kratki, przeciążając budynki wroga na 15s (odcina zasilanie i pylony).",
-				"stats": "HP: 180 · Zasięg wybuchu: 2 kratki · Efekt: EMP 15s",
-				"cost_text": "⚙️ 90 Żelazo  🛢️ 40 Ropa  🔴 15 Czerwienit"
+				"desc": "Dron kamikadze. Wybucha na 3.5 kratki, przeciążając budynki wroga na 15s (odcina zasilanie i pylony).",
+				"stats": "HP: 180 · Zasięg wybuchu: 3.5 kratki · Efekt: EMP 15s · Czas: 15s",
+				"cost_text": "⚙️ 100 Żelazo  🛢️ 50 Ropa  🔴 20 Czerwienit"
 			}
 		]
 		
@@ -169,7 +189,9 @@ func _build_content() -> void:
 		if u_def == null: continue
 		
 		var can_afford = economy.can_afford(u_def.cost)
-		var can_build = is_powered and can_afford
+		var queue_count = unit_manager.get_queue_for_building(target_building.instance_id).size()
+		var queue_full = queue_count >= unit_manager.MAX_QUEUE_PER_BUILDING
+		var can_build = is_powered and can_afford and not queue_full
 		
 		var u_panel = PanelContainer.new()
 		var sb_item = UITheme.create_panel_style(Color(0.05, 0.09, 0.16, 0.90), Color(0.16, 0.32, 0.50, 0.6), 4, 1, 8)
@@ -211,8 +233,15 @@ func _build_content() -> void:
 		info_vbox.add_child(u_cost_lbl)
 		
 		var train_btn = Button.new()
-		train_btn.text = "BUDUJ" if can_build else ("BRAK PRĄDU" if not is_powered else "BRAK SUROWCÓW")
-		train_btn.custom_minimum_size = Vector2(130, 42)
+		if queue_full:
+			train_btn.text = "KOLEJKA PEŁNA"
+		elif not is_powered:
+			train_btn.text = "BRAK PRĄDU"
+		elif not can_afford:
+			train_btn.text = "BRAK SUROWCÓW"
+		else:
+			train_btn.text = "DODAJ DO KOLEJKI"
+		train_btn.custom_minimum_size = Vector2(140, 42)
 		train_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		
 		var btn_base = Color(0.12, 0.40, 0.25) if can_build else Color(0.25, 0.12, 0.14)
@@ -227,6 +256,87 @@ func _build_content() -> void:
 		)
 		u_hbox.add_child(train_btn)
 		card_buttons.append(train_btn)
+
+func _refresh_queue_display() -> void:
+	if queue_container == null: return
+	
+	for c in queue_container.get_children():
+		c.queue_free()
+	
+	var queue = unit_manager.get_queue_for_building(target_building.instance_id)
+	if queue.is_empty():
+		var empty_lbl = Label.new()
+		empty_lbl.text = "📋 Kolejka produkcyjna: pusta"
+		empty_lbl.add_theme_font_size_override("font_size", 12)
+		empty_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+		queue_container.add_child(empty_lbl)
+		return
+	
+	var header_lbl = Label.new()
+	header_lbl.text = "📋 KOLEJKA PRODUKCYJNA (%d/%d):" % [queue.size(), unit_manager.MAX_QUEUE_PER_BUILDING]
+	header_lbl.add_theme_font_size_override("font_size", 12)
+	header_lbl.add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD)
+	queue_container.add_child(header_lbl)
+	
+	for i in range(queue.size()):
+		var entry = queue[i]
+		var u_def = unit_manager.definitions.get(entry.def_id, null)
+		var u_name = u_def.name if u_def != null else entry.def_id
+		var is_active = (i == 0)
+		
+		var entry_hbox = HBoxContainer.new()
+		entry_hbox.add_theme_constant_override("separation", 8)
+		queue_container.add_child(entry_hbox)
+		
+		# Index + name
+		var idx_lbl = Label.new()
+		if is_active:
+			var pct = int((entry.progress / entry.total_time) * 100.0)
+			var remaining = int(ceil(entry.total_time - entry.progress))
+			idx_lbl.text = "⏳ %s — %d%% (%ds)" % [u_name, pct, remaining]
+			idx_lbl.add_theme_color_override("font_color", UITheme.COLOR_SUCCESS_GREEN)
+		else:
+			idx_lbl.text = "  %d. %s (oczekuje)" % [i + 1, u_name]
+			idx_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_LIGHT)
+		idx_lbl.add_theme_font_size_override("font_size", 12)
+		idx_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		entry_hbox.add_child(idx_lbl)
+		
+		# Progress bar for active entry
+		if is_active:
+			var bar_bg = ColorRect.new()
+			bar_bg.custom_minimum_size = Vector2(120, 10)
+			bar_bg.color = Color(0.08, 0.14, 0.22, 0.9)
+			entry_hbox.add_child(bar_bg)
+			
+			var bar_fill = ColorRect.new()
+			var fill_pct = clampf(entry.progress / entry.total_time, 0.0, 1.0)
+			bar_fill.custom_minimum_size = Vector2(int(120.0 * fill_pct), 10)
+			bar_fill.color = UITheme.COLOR_SUCCESS_GREEN
+			bar_bg.add_child(bar_fill)
+		
+		# Cancel button
+		var cancel_btn = Button.new()
+		cancel_btn.text = "✕"
+		cancel_btn.custom_minimum_size = Vector2(24, 24)
+		UITheme.style_button(cancel_btn, Color(0.30, 0.10, 0.12), UITheme.COLOR_ACCENT_RED, 24, 12)
+		cancel_btn.tooltip_text = "Anuluj (zwrot 100% surowców)"
+		var captured_entry = entry
+		cancel_btn.pressed.connect(func():
+			unit_manager.cancel_queue_entry(captured_entry, economy)
+			_refresh_queue_display()
+			_build_content()
+		)
+		entry_hbox.add_child(cancel_btn)
+
+func _refresh_buttons() -> void:
+	# Update status label
+	if status_lbl != null and is_instance_valid(status_lbl):
+		var is_powered = target_building.is_powered and not economy.is_blackout and target_building.emp_overload_timer <= 0.0
+		var pwr_str = "⚡ STATUS: ZASILANIE AKTYWNE" if is_powered else "⚠️ STATUS: BRAK ZASILANIA / PRZECIĄŻENIE"
+		var pwr_col = UITheme.COLOR_SUCCESS_GREEN if is_powered else UITheme.COLOR_ACCENT_RED
+		status_lbl.text = pwr_str
+		status_lbl.add_theme_color_override("font_color", pwr_col)
 
 func _toggle_minimize() -> void:
 	is_minimized = not is_minimized
@@ -262,7 +372,11 @@ func _train_unit(def_id: String) -> void:
 		
 	if not target_building.is_powered or economy.is_blackout:
 		return
+	
+	var queue_count = unit_manager.get_queue_for_building(target_building.instance_id).size()
+	if queue_count >= unit_manager.MAX_QUEUE_PER_BUILDING:
+		return
 		
 	if economy.spend_resources(u_def.cost):
-		unit_trained.emit(def_id, target_building)
+		unit_manager.queue_unit_training(def_id, target_building.instance_id, target_building.slot)
 		_build_content()

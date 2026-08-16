@@ -156,13 +156,13 @@ func update_grid(delta: float, buildings: Array, local_slot: int = -1, research:
 		var mine_mult = research.mining_multiplier if research != null else 1.0
 		for mine in active_mines:
 			if mine.def_id == "stone_mine":
-				add_resource(MapData.ResourceType.STONE, int(8 * mine_mult))
+				add_resource(MapData.ResourceType.STONE, int(5 * mine_mult))
 			elif mine.def_id == "iron_mine":
-				add_resource(MapData.ResourceType.IRON, int(6 * mine_mult))
+				add_resource(MapData.ResourceType.IRON, int(4 * mine_mult))
 			elif mine.def_id == "oil_pump":
-				add_resource(MapData.ResourceType.OIL, int(4 * mine_mult))
+				add_resource(MapData.ResourceType.OIL, int(3 * mine_mult))
 			elif mine.def_id == "redstone_mine":
-				add_resource(MapData.ResourceType.REDSTONE, int(3 * mine_mult))
+				add_resource(MapData.ResourceType.REDSTONE, int(2 * mine_mult))
 				
 	_emit_update()
 
