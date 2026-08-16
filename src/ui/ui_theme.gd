@@ -43,6 +43,15 @@ static func create_panel_style(
 	sb.content_margin_bottom = padding
 	return sb
 
+static func create_separator_style(
+	color: Color = Color(0.12, 0.28, 0.44, 0.6),
+	thickness: int = 1
+) -> StyleBoxLine:
+	var sb = StyleBoxLine.new()
+	sb.color = color
+	sb.thickness = thickness
+	return sb
+
 static func style_button(
 	btn: Button,
 	base_color: Color = Color(0.08, 0.18, 0.30, 0.9),
