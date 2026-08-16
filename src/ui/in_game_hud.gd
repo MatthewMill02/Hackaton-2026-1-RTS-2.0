@@ -72,6 +72,7 @@ var f3_diagnostics_overlay: PanelContainer = null
 var f3_diag_labels: Dictionary = {}
 var camp_card_popup: PanelContainer = null
 var last_hovered_camp: MapData.CampNode = null
+var pause_banner_overlay: PanelContainer = null
 
 func _init(p_net: NetworkManager = null, p_settings: SettingsManager = null, p_map: MapData = null) -> void:
 	network_manager = p_net
@@ -127,6 +128,7 @@ func _ready() -> void:
 		network_manager.remote_turret_fired.connect(_on_remote_turret_fired)
 		network_manager.remote_camp_damaged.connect(_on_remote_camp_damaged)
 		network_manager.match_victory_declared.connect(_on_remote_match_victory)
+		network_manager.match_pause_toggled.connect(_on_network_pause_toggled)
 	
 	# 2. Spawn Starting HQ and Initial Drone (Deterministic IDs)
 	_spawn_starting_entities()
@@ -1558,6 +1560,8 @@ func _on_map_gui_input(event: InputEvent) -> void:
 		map_viewport.queue_redraw()
 		
 	elif event is InputEventMouseButton:
+		if is_paused and event.button_index != MOUSE_BUTTON_MIDDLE and event.button_index != MOUSE_BUTTON_WHEEL_UP and event.button_index != MOUSE_BUTTON_WHEEL_DOWN:
+			return
 		if event.button_index == MOUSE_BUTTON_MIDDLE:
 			is_dragging = event.pressed
 			drag_start = event.position
@@ -2337,3 +2341,76 @@ func _update_f3_diagnostics() -> void:
 	var fps = Engine.get_frames_per_second()
 	var frame_ms = 1000.0 / maxf(1.0, float(fps))
 	f3_diag_labels["fps"].text = "%d FPS (%.1f ms)" % [fps, frame_ms]
+
+# ==============================================================================
+# Synchronized Match Pause
+# ==============================================================================
+
+func _on_network_pause_toggled(p_is_paused: bool, by_peer_id: int, by_player_name: String) -> void:
+	is_paused = p_is_paused
+	if is_paused:
+		_show_pause_banner(by_peer_id, by_player_name)
+		if in_game_chat_log != null:
+			in_game_chat_log.append_text("[color=#ffbe00]⏸️ [b]%s[/b] wstrzymał rozgrywkę dla wszystkich.[/color]\n" % by_player_name)
+	else:
+		_hide_pause_banner()
+		if in_game_chat_log != null:
+			in_game_chat_log.append_text("[color=#00f0ff]▶️ [b]%s[/b] wznowił rozgrywkę.[/color]\n" % by_player_name)
+
+func _show_pause_banner(by_peer_id: int, by_player_name: String) -> void:
+	_hide_pause_banner()
+	
+	pause_banner_overlay = PanelContainer.new()
+	pause_banner_overlay.set_anchors_preset(PRESET_CENTER_TOP)
+	pause_banner_overlay.offset_top = 80.0
+	pause_banner_overlay.custom_minimum_size = Vector2(520, 0)
+	
+	var sb = UITheme.create_panel_style(Color(0.02, 0.05, 0.10, 0.96), UITheme.COLOR_WARNING_GOLD, 6, 2, 16)
+	pause_banner_overlay.add_theme_stylebox_override("panel", sb)
+	add_child(pause_banner_overlay)
+	
+	var vbox = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	pause_banner_overlay.add_child(vbox)
+	
+	var title_lbl = Label.new()
+	title_lbl.text = "⏸️ ROZGRYWKA WSTRZYMANA"
+	title_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title_lbl.add_theme_font_size_override("font_size", 20)
+	title_lbl.add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD)
+	vbox.add_child(title_lbl)
+	
+	var sub_lbl = Label.new()
+	sub_lbl.text = "Gracz [ %s ] zatrzymał mecz dla wszystkich graczy." % by_player_name
+	sub_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sub_lbl.add_theme_font_size_override("font_size", 13)
+	sub_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_LIGHT)
+	vbox.add_child(sub_lbl)
+	
+	var my_id = multiplayer.get_unique_id() if (multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED) else 1
+	
+	if by_peer_id == my_id or by_peer_id == 0:
+		var resume_btn = Button.new()
+		resume_btn.text = "▶️ WZNÓW ROZGRYWKĘ"
+		resume_btn.custom_minimum_size = Vector2(240, 42)
+		resume_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		UITheme.style_button(resume_btn, Color(0.10, 0.35, 0.20), UITheme.COLOR_SUCCESS_GREEN, 42, 15)
+		resume_btn.pressed.connect(func():
+			if network_manager != null:
+				network_manager.request_toggle_pause()
+			else:
+				_on_network_pause_toggled(false, my_id, by_player_name)
+		)
+		vbox.add_child(resume_btn)
+	else:
+		var lock_lbl = Label.new()
+		lock_lbl.text = "🔒 Tylko gracz %s może wznowić rozgrywkę." % by_player_name
+		lock_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lock_lbl.add_theme_font_size_override("font_size", 12)
+		lock_lbl.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
+		vbox.add_child(lock_lbl)
+
+func _hide_pause_banner() -> void:
+	if pause_banner_overlay != null and is_instance_valid(pause_banner_overlay):
+		pause_banner_overlay.queue_free()
+		pause_banner_overlay = null

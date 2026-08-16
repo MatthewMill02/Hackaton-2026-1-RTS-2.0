@@ -25,6 +25,7 @@ signal remote_camp_damaged(camp_grid_pos: Vector2i, damage: int, killer_slot: in
 signal match_settings_synced(creative: bool, points: int, duration_min: int)
 signal match_countdown_updated(seconds_left: int)
 signal match_victory_declared(winner_slot: int, winner_name: String, final_score: int)
+signal match_pause_toggled(is_paused: bool, paused_by_peer_id: int, paused_by_player_name: String)
 
 var peer: ENetMultiplayerPeer = null
 var discovery: LobbyDiscovery = null
@@ -49,6 +50,10 @@ var match_duration_min: int = 45
 var countdown_active: bool = false
 var current_ping_ms: int = 0
 var _ping_timer: float = 0.0
+
+var is_game_paused: bool = false
+var paused_by_peer_id: int = 0
+var paused_by_player_name: String = ""
 
 func _process(delta: float) -> void:
 	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
@@ -642,6 +647,42 @@ func send_match_victory(winner_slot: int, winner_name: String, final_score: int)
 @rpc("any_peer", "call_local", "reliable")
 func sync_match_victory(winner_slot: int, winner_name: String, final_score: int) -> void:
 	match_victory_declared.emit(winner_slot, winner_name, final_score)
+
+func request_toggle_pause() -> void:
+	var my_id = multiplayer.get_unique_id() if (multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED) else 1
+	var my_name = local_player.name if local_player != null else "Gracz"
+	
+	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
+		rpc("sync_match_pause_request", my_id, my_name)
+	else:
+		# Singleplayer / Local fallback
+		if not is_game_paused:
+			is_game_paused = true
+			paused_by_peer_id = my_id
+			paused_by_player_name = my_name
+			match_pause_toggled.emit(true, my_id, my_name)
+		else:
+			if paused_by_peer_id == my_id or paused_by_peer_id == 0:
+				is_game_paused = false
+				paused_by_peer_id = 0
+				paused_by_player_name = ""
+				match_pause_toggled.emit(false, my_id, my_name)
+
+@rpc("any_peer", "call_local", "reliable")
+func sync_match_pause_request(sender_peer_id: int, sender_name: String) -> void:
+	if not is_game_paused:
+		# Any player can initiate a pause
+		is_game_paused = true
+		paused_by_peer_id = sender_peer_id
+		paused_by_player_name = sender_name
+		match_pause_toggled.emit(true, sender_peer_id, sender_name)
+	else:
+		# ONLY the player who paused the game can unpause it!
+		if sender_peer_id == paused_by_peer_id:
+			is_game_paused = false
+			paused_by_peer_id = 0
+			paused_by_player_name = ""
+			match_pause_toggled.emit(false, sender_peer_id, sender_name)
 
 # ==============================================================================
 # Helper Methods

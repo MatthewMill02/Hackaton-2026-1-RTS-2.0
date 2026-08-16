@@ -32,6 +32,9 @@ func _init(p_settings: SettingsManager, p_network: NetworkManager = null, p_in_g
 func _ready() -> void:
 	_build_ui()
 	_load_current_values()
+	if network_manager != null:
+		network_manager.match_pause_toggled.connect(_on_network_pause_toggled)
+	_update_pause_button_state()
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
@@ -294,11 +297,38 @@ func _on_ip_option_selected(index: int) -> void:
 		ip_input_row.visible = true
 		host_ip_input.grab_focus()
 
+func _update_pause_button_state() -> void:
+	if pause_btn == null: return
+	
+	var my_id = multiplayer.get_unique_id() if (multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED) else 1
+	var is_paused = network_manager.is_game_paused if network_manager != null else is_game_paused
+	var paused_by_id = network_manager.paused_by_peer_id if network_manager != null else 0
+	var paused_by_name = network_manager.paused_by_player_name if network_manager != null else ""
+	
+	if is_paused:
+		if paused_by_id == my_id or paused_by_id == 0:
+			pause_btn.text = "▶️ WZNÓW ROZGRYWKĘ"
+			pause_btn.disabled = false
+			UITheme.style_button(pause_btn, Color(0.10, 0.35, 0.20), UITheme.COLOR_SUCCESS_GREEN, 44, 16)
+		else:
+			pause_btn.text = "🔒 WSTRZYMANE PRZEZ: %s" % paused_by_name
+			pause_btn.disabled = true
+			UITheme.style_button(pause_btn, Color(0.18, 0.18, 0.18), Color(0.5, 0.5, 0.5), 44, 14)
+	else:
+		pause_btn.text = "⏸️ WSTRZYMAJ GRĘ (DLA WSZYSTKICH)"
+		pause_btn.disabled = false
+		UITheme.style_button(pause_btn, Color(0.12, 0.24, 0.38), UITheme.COLOR_ACCENT_CYAN, 44, 15)
+
+func _on_network_pause_toggled(_is_p: bool, _by_id: int, _by_name: String) -> void:
+	_update_pause_button_state()
+
 func _on_pause_pressed() -> void:
-	is_game_paused = !is_game_paused
-	pause_btn.text = "WZNÓW GRĘ" if is_game_paused else "WSTRZYMAJ GRĘ"
-	pause_btn.add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD if is_game_paused else Color.WHITE)
-	pause_game_toggled.emit(is_game_paused)
+	if network_manager != null:
+		network_manager.request_toggle_pause()
+	else:
+		is_game_paused = !is_game_paused
+		pause_game_toggled.emit(is_game_paused)
+	_update_pause_button_state()
 
 func _on_save_pressed() -> void:
 	if settings_manager != null:
