@@ -30,6 +30,10 @@ var player_list_vbox: VBoxContainer
 var creative_check: CheckBox
 var points_val_lbl: Label
 var duration_val_lbl: Label
+var btn_pts_minus: Button
+var btn_pts_plus: Button
+var btn_dur_minus: Button
+var btn_dur_plus: Button
 var public_check: CheckBox
 var add_bot_btn: Button
 var ready_btn: Button
@@ -212,6 +216,8 @@ func _build_ui() -> void:
 	creative_check.text = "TRYB KREATYWNY"
 	creative_check.add_theme_font_size_override("font_size", 15)
 	creative_check.toggled.connect(func(v):
+		if network_manager and not network_manager.is_host:
+			return
 		is_creative = v
 		match_settings_changed.emit(is_creative, current_points, current_duration)
 	)
@@ -226,7 +232,7 @@ func _build_ui() -> void:
 	pts_lbl.add_theme_font_size_override("font_size", 14)
 	pts_row.add_child(pts_lbl)
 	
-	var btn_pts_minus = Button.new()
+	btn_pts_minus = Button.new()
 	btn_pts_minus.text = "-"
 	btn_pts_minus.custom_minimum_size = Vector2(34, 34)
 	btn_pts_minus.add_theme_font_size_override("font_size", 16)
@@ -240,7 +246,7 @@ func _build_ui() -> void:
 	points_val_lbl.add_theme_font_size_override("font_size", 16)
 	pts_row.add_child(points_val_lbl)
 	
-	var btn_pts_plus = Button.new()
+	btn_pts_plus = Button.new()
 	btn_pts_plus.text = "+"
 	btn_pts_plus.custom_minimum_size = Vector2(34, 34)
 	btn_pts_plus.add_theme_font_size_override("font_size", 16)
@@ -256,7 +262,7 @@ func _build_ui() -> void:
 	dur_lbl.add_theme_font_size_override("font_size", 14)
 	dur_row.add_child(dur_lbl)
 	
-	var btn_dur_minus = Button.new()
+	btn_dur_minus = Button.new()
 	btn_dur_minus.text = "-5"
 	btn_dur_minus.custom_minimum_size = Vector2(34, 34)
 	btn_dur_minus.add_theme_font_size_override("font_size", 15)
@@ -270,7 +276,7 @@ func _build_ui() -> void:
 	duration_val_lbl.add_theme_font_size_override("font_size", 16)
 	dur_row.add_child(duration_val_lbl)
 	
-	var btn_dur_plus = Button.new()
+	btn_dur_plus = Button.new()
 	btn_dur_plus.text = "+5"
 	btn_dur_plus.custom_minimum_size = Vector2(34, 34)
 	btn_dur_plus.add_theme_font_size_override("font_size", 15)
@@ -749,6 +755,20 @@ func update_lobby_state(players: Array, is_host: bool, local_peer_id: int) -> vo
 		add_bot_btn.disabled = not can_add
 		add_bot_btn.text = "DODAJ BOTA (%d/4)" % count if can_add else "LOBBY PEŁNE (4/4)"
 
+	# Restrict match settings in sidebar to host only
+	if creative_check != null:
+		creative_check.disabled = not is_host
+	if btn_pts_minus != null:
+		btn_pts_minus.disabled = not is_host
+	if btn_pts_plus != null:
+		btn_pts_plus.disabled = not is_host
+	if btn_dur_minus != null:
+		btn_dur_minus.disabled = not is_host
+	if btn_dur_plus != null:
+		btn_dur_plus.disabled = not is_host
+	if public_check != null:
+		public_check.disabled = not is_host
+
 	if is_host:
 		ready_btn.visible = false
 		start_btn.visible = true
@@ -800,6 +820,8 @@ func _update_room_code_display() -> void:
 		code_lbl.text = network_manager.room_code
 
 func _change_points(delta_pts: int) -> void:
+	if network_manager and not network_manager.is_host:
+		return
 	current_points = clampi(current_points + delta_pts, 100, 5000)
 	points_val_lbl.text = str(current_points)
 	match_settings_changed.emit(is_creative, current_points, current_duration)
@@ -807,6 +829,8 @@ func _change_points(delta_pts: int) -> void:
 		network_manager.send_chat("Zmieniono cel punktowy: %d pkt" % current_points)
 
 func _change_duration(delta_val: int) -> void:
+	if network_manager and not network_manager.is_host:
+		return
 	current_duration = clampi(current_duration + delta_val, 5, 120)
 	duration_val_lbl.text = str(current_duration)
 	match_settings_changed.emit(is_creative, current_points, current_duration)
@@ -821,8 +845,6 @@ func sync_settings_ui(p_creative: bool, p_points: int, p_dur: int) -> void:
 		points_val_lbl.text = str(current_points)
 	if duration_val_lbl != null:
 		duration_val_lbl.text = str(current_duration)
-	if network_manager and network_manager.is_host:
-		network_manager.send_chat("Zmieniono czas rozgrywki: %d min" % current_duration)
 
 func _on_add_bot_pressed() -> void:
 	if network_manager and network_manager.is_host:
