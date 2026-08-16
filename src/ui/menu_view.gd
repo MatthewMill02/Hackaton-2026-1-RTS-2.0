@@ -253,7 +253,7 @@ func _build_ui() -> void:
 	
 	# --- BOTTOM WATERMARK ---
 	var bottom_lbl = Label.new()
-	bottom_lbl.text = "v0.1 · RTS multiplayer"
+	bottom_lbl.text = "v0.2.1 · RTS multiplayer"
 	bottom_lbl.add_theme_font_size_override("font_size", 14)
 	bottom_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED.darkened(0.2))
 	main_vbox.add_child(bottom_lbl)
