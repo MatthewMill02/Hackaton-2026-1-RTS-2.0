@@ -1363,6 +1363,7 @@ func _on_map_gui_input(event: InputEvent) -> void:
 						else:
 							var placed = buildings.place_building(active_placing_def_id, hover_grid_pos, local_slot, active_map, economy)
 							if placed != null:
+								_animate_resource_deductions(def.cost)
 								var pts = _get_building_score_points(placed.def_id)
 								_add_score(pts, "Postawiono: %s (+%d pkt)" % [placed.name, pts])
 								in_game_chat_log.append_text("[color=#00f0ff]Postawiono: [b]%s[/b] (+%d pkt do zwycięstwa)[/color]\n" % [placed.name, pts])
@@ -1564,6 +1565,54 @@ func _show_floating_mouse_alert(text: String, screen_pos: Vector2, color: Color 
 	tw.tween_property(alert_panel, "modulate:a", 0.0, 1.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	tw.chain().tween_callback(alert_panel.queue_free)
 
+func _animate_resource_deductions(cost_dict: Dictionary) -> void:
+	for r_key in ["stone", "iron", "oil", "redstone"]:
+		var req = cost_dict.get(r_key, 0)
+		if req > 0:
+			_animate_resource_change(r_key, req, true)
+
+func _animate_resource_change(r_key: String, amount: int, is_deduction: bool = true) -> void:
+	var target_lbl: Label = null
+	var res_name = ""
+	match r_key:
+		"stone":
+			target_lbl = res_stone_lbl
+			res_name = "kamienia"
+		"iron":
+			target_lbl = res_iron_lbl
+			res_name = "żelaza"
+		"oil":
+			target_lbl = res_oil_lbl
+			res_name = "ropy"
+		"redstone":
+			target_lbl = res_redstone_lbl
+			res_name = "czerwienitu"
+			
+	if target_lbl == null: return
+	
+	var badge = PanelContainer.new()
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bg_col = Color(0.24, 0.04, 0.06, 0.95) if is_deduction else Color(0.04, 0.22, 0.10, 0.95)
+	var border_col = UITheme.COLOR_ACCENT_RED if is_deduction else UITheme.COLOR_SUCCESS_GREEN
+	var sb = UITheme.create_panel_style(bg_col, border_col, 3, 1, 4)
+	badge.add_theme_stylebox_override("panel", sb)
+	
+	var pos = target_lbl.global_position + Vector2(0, 24)
+	badge.global_position = pos
+	add_child(badge)
+	
+	var l = Label.new()
+	l.text = "-%d %s" % [amount, res_name] if is_deduction else "+%d %s" % [amount, res_name]
+	l.add_theme_font_size_override("font_size", 12)
+	l.add_theme_color_override("font_color", border_col)
+	badge.add_child(l)
+	
+	var tw = create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(badge, "global_position:y", pos.y + 24.0, 1.4).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(badge, "modulate:a", 0.0, 1.4).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tw.chain().tween_callback(badge.queue_free)
+
 func _update_timer_display() -> void:
 	var total_sec = int(match_timer_seconds)
 	var mins = total_sec / 60
@@ -1600,6 +1649,12 @@ func _on_camp_destroyed(camp_node: MapData.CampNode, killer_slot: int) -> void:
 	current_score += 300 if camp_node.type == MapData.CampType.BOSS else 100
 	if killer_slot == local_slot:
 		camps_count += 1
+		var s_amt = 300 if camp_node.type == MapData.CampType.BOSS else 100
+		var i_amt = 300 if camp_node.type == MapData.CampType.BOSS else 100
+		var o_amt = 150 if camp_node.type == MapData.CampType.BOSS else 50
+		_animate_resource_change("stone", s_amt, false)
+		_animate_resource_change("iron", i_amt, false)
+		_animate_resource_change("oil", o_amt, false)
 	if score_lbl != null:
 		score_lbl.text = "★ %d / %d pkt" % [current_score, target_score]
 		
@@ -1614,6 +1669,10 @@ func _on_unit_killed_reward(stone: int, iron: int, oil: int, redstone: int) -> v
 	kills_count += 1
 	in_game_chat_log.append_text("[color=#38bdf8]💀 [b]POKONANO WROGA![/b] Zdobyto: +%d Kamień, +%d Żelazo, +%d Ropa, +%d Czerwienit[/color]\n" % [stone, iron, oil, redstone])
 	_add_score(15, "Zabicie jednostki (+15 pkt)")
+	if stone > 0: _animate_resource_change("stone", stone, false)
+	if iron > 0: _animate_resource_change("iron", iron, false)
+	if oil > 0: _animate_resource_change("oil", oil, false)
+	if redstone > 0: _animate_resource_change("redstone", redstone, false)
 	_update_resource_labels()
 
 func _get_building_score_points(def_id: String) -> int:
