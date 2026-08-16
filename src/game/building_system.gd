@@ -102,7 +102,12 @@ static func is_tile_powered(tile: Vector2i, buildings_list: Array, player_slot: 
 	return false
 
 func update_timers(delta: float, local_slot: int = -1, research: ResearchSystem = null) -> void:
-	for b in building_instances:
+	for i in range(building_instances.size() - 1, -1, -1):
+		var b = building_instances[i]
+		if b.hp <= 0:
+			building_instances.remove_at(i)
+			continue
+			
 		if b.emp_overload_timer > 0.0:
 			b.emp_overload_timer = maxf(0.0, b.emp_overload_timer - delta)
 			
@@ -182,6 +187,7 @@ func is_position_valid_for_building(
 				
 	# 2. Overlap check with other buildings
 	for b in building_instances:
+		if b.hp <= 0: continue
 		var r1 = Rect2i(grid_pos, def.size)
 		var r2 = Rect2i(b.grid_pos, b.size)
 		if r1.intersects(r2):
@@ -348,6 +354,6 @@ func demolish_building_at(grid_pos: Vector2i, player_slot: int, economy: Economy
 
 func get_building_at(grid_pos: Vector2i) -> BuildingInstance:
 	for b in building_instances:
-		if Rect2i(b.grid_pos, b.size).has_point(grid_pos):
+		if b.hp > 0 and Rect2i(b.grid_pos, b.size).has_point(grid_pos):
 			return b
 	return null

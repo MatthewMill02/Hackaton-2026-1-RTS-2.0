@@ -1050,6 +1050,7 @@ func _on_map_draw() -> void:
 
 	# 5. Buildings
 	for b in buildings.building_instances:
+		if b.hp <= 0: continue
 		var b_pos = origin + Vector2(b.grid_pos.x * tile_sz, b.grid_pos.y * tile_sz)
 		var b_box = Rect2(b_pos, Vector2(b.size.x * tile_sz, b.size.y * tile_sz))
 		var is_ghost = (b.build_progress < 1.0)
