@@ -47,7 +47,35 @@ var match_target_score: int = 1200
 var match_duration_min: int = 45
 
 var countdown_active: bool = false
-var current_countdown_sec: int = -1
+var current_ping_ms: int = 0
+var _ping_timer: float = 0.0
+
+func _process(delta: float) -> void:
+	if multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
+		_ping_timer += delta
+		if _ping_timer >= 0.5:
+			_ping_timer = 0.0
+			_send_ping_request()
+
+func _send_ping_request() -> void:
+	if is_host:
+		current_ping_ms = 0
+		if local_player != null:
+			local_player.ping = 0
+	else:
+		rpc_id(1, "request_ping", Time.get_ticks_msec())
+
+@rpc("any_peer", "unreliable")
+func request_ping(sender_msec: int) -> void:
+	var sender_id = multiplayer.get_remote_sender_id()
+	rpc_id(sender_id, "response_ping", sender_msec)
+
+@rpc("any_peer", "unreliable")
+func response_ping(orig_msec: int) -> void:
+	var now = Time.get_ticks_msec()
+	current_ping_ms = maxi(0, now - orig_msec)
+	if local_player != null:
+		local_player.ping = current_ping_ms
 
 func _ready() -> void:
 	discovery = LobbyDiscovery.new()

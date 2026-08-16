@@ -68,6 +68,8 @@ var active_lab_modal: LabResearchModal = null
 var scoreboard_overlay: ScoreboardModal = null
 var building_card_popup: PanelContainer = null
 var snapshot_timer: float = 0.0
+var f3_diagnostics_overlay: PanelContainer = null
+var f3_diag_labels: Dictionary = {}
 
 func _init(p_net: NetworkManager = null, p_settings: SettingsManager = null, p_map: MapData = null) -> void:
 	network_manager = p_net
@@ -129,6 +131,7 @@ func _ready() -> void:
 	
 	# 3. Build HUD UI
 	_build_ui()
+	_build_f3_diagnostics_overlay()
 	_center_camera_on_player_base()
 
 func _spawn_starting_entities() -> void:
@@ -223,11 +226,17 @@ func _input(event: InputEvent) -> void:
 				else:
 					_toggle_esc_settings_modal()
 				get_viewport().set_input_as_handled()
+			elif event.keycode == KEY_F3:
+				_toggle_f3_diagnostics()
+				get_viewport().set_input_as_handled()
 			elif event.keycode == KEY_T and not in_game_chat_input.has_focus():
 				in_game_chat_input.grab_focus()
 				get_viewport().set_input_as_handled()
 
 func _process(delta: float) -> void:
+	if f3_diagnostics_overlay != null and f3_diagnostics_overlay.visible:
+		_update_f3_diagnostics()
+		
 	if not is_paused:
 		if match_timer_seconds > 0:
 			match_timer_seconds -= delta
@@ -2051,3 +2060,107 @@ func _on_remote_camp_damaged(camp_grid_pos: Vector2i, damage: int, killer_slot: 
 				combat._on_camp_defeated(c, killer_slot, null)
 			break
 	if map_viewport: map_viewport.queue_redraw()
+
+# ==============================================================================
+# F3 Network Diagnostics & Ping Overlay
+# ==============================================================================
+
+func _toggle_f3_diagnostics() -> void:
+	if f3_diagnostics_overlay == null: return
+	f3_diagnostics_overlay.visible = not f3_diagnostics_overlay.visible
+	if f3_diagnostics_overlay.visible:
+		_update_f3_diagnostics()
+
+func _build_f3_diagnostics_overlay() -> void:
+	f3_diagnostics_overlay = PanelContainer.new()
+	f3_diagnostics_overlay.set_anchors_preset(PRESET_TOP_LEFT)
+	f3_diagnostics_overlay.offset_left = 16.0
+	f3_diagnostics_overlay.offset_top = 70.0
+	f3_diagnostics_overlay.custom_minimum_size = Vector2(340, 0)
+	f3_diagnostics_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	f3_diagnostics_overlay.visible = false
+	
+	var sb = UITheme.create_panel_style(Color(0.02, 0.05, 0.10, 0.94), UITheme.COLOR_ACCENT_CYAN, 6, 2, 12)
+	f3_diagnostics_overlay.add_theme_stylebox_override("panel", sb)
+	add_child(f3_diagnostics_overlay)
+	
+	var vbox = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	f3_diagnostics_overlay.add_child(vbox)
+	
+	var title_lbl = Label.new()
+	title_lbl.text = "⚡ DIAGNOSTYKA SIECIOWA & PING [F3]"
+	title_lbl.add_theme_font_size_override("font_size", 14)
+	title_lbl.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
+	vbox.add_child(title_lbl)
+	
+	var sep = HSeparator.new()
+	sep.add_theme_stylebox_override("separator", UITheme.create_separator_style(UITheme.COLOR_ACCENT_CYAN))
+	vbox.add_child(sep)
+	
+	f3_diag_labels["ping"] = _create_f3_hud_diag_row(vbox, "⏱️ PING / OPÓŹNIENIE:", "0 ms")
+	f3_diag_labels["status"] = _create_f3_hud_diag_row(vbox, "🌐 STATUS POŁĄCZENIA:", "POŁĄCZONO Z SERWEREM")
+	f3_diag_labels["role"] = _create_f3_hud_diag_row(vbox, "👑 ROLA W SESJI:", "HOST SERWER")
+	f3_diag_labels["address"] = _create_f3_hud_diag_row(vbox, "📡 ADRES SERWERA:", "127.0.0.1:7777")
+	f3_diag_labels["code"] = _create_f3_hud_diag_row(vbox, "🔑 KOD POKOJU:", "ABCD-1234")
+	f3_diag_labels["peer"] = _create_f3_hud_diag_row(vbox, "🆔 MULTI-PEER ID:", "1")
+	f3_diag_labels["players"] = _create_f3_hud_diag_row(vbox, "👥 GRACZE W GRZE:", "1 / 4")
+	f3_diag_labels["fps"] = _create_f3_hud_diag_row(vbox, "🖥️ WYDAJNOŚĆ (FPS):", "60 FPS")
+	
+	var hint_lbl = Label.new()
+	hint_lbl.text = "Wciśnij [F3], aby ukryć to okno"
+	hint_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint_lbl.add_theme_font_size_override("font_size", 11)
+	hint_lbl.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
+	vbox.add_child(hint_lbl)
+
+func _create_f3_hud_diag_row(parent: Control, label_text: String, default_val: String) -> Label:
+	var hbox = HBoxContainer.new()
+	parent.add_child(hbox)
+	
+	var l_title = Label.new()
+	l_title.text = label_text
+	l_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	l_title.add_theme_font_size_override("font_size", 12)
+	l_title.add_theme_color_override("font_color", UITheme.COLOR_TEXT_LIGHT)
+	hbox.add_child(l_title)
+	
+	var l_val = Label.new()
+	l_val.text = default_val
+	l_val.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	l_val.add_theme_font_size_override("font_size", 12)
+	l_val.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
+	hbox.add_child(l_val)
+	return l_val
+
+func _update_f3_diagnostics() -> void:
+	if network_manager == null: return
+	
+	var ping_ms = network_manager.current_ping_ms
+	var ping_col = UITheme.COLOR_SUCCESS_GREEN if ping_ms < 50 else (UITheme.COLOR_WARNING_GOLD if ping_ms < 120 else UITheme.COLOR_ACCENT_RED)
+	if network_manager.is_host:
+		f3_diag_labels["ping"].text = "0 ms (HOST)"
+		f3_diag_labels["ping"].add_theme_color_override("font_color", UITheme.COLOR_SUCCESS_GREEN)
+	else:
+		f3_diag_labels["ping"].text = "%d ms" % ping_ms
+		f3_diag_labels["ping"].add_theme_color_override("font_color", ping_col)
+		
+	var is_connected = (multiplayer.multiplayer_peer != null and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED)
+	f3_diag_labels["status"].text = "POŁĄCZONO" if is_connected else "ROZŁĄCZONO"
+	f3_diag_labels["status"].add_theme_color_override("font_color", UITheme.COLOR_SUCCESS_GREEN if is_connected else UITheme.COLOR_ACCENT_RED)
+	
+	f3_diag_labels["role"].text = "👑 HOST (SERWER)" if network_manager.is_host else "🎮 KLIENT"
+	f3_diag_labels["role"].add_theme_color_override("font_color", UITheme.COLOR_WARNING_GOLD if network_manager.is_host else UITheme.COLOR_ACCENT_CYAN)
+	
+	f3_diag_labels["address"].text = "%s:%d" % [network_manager.server_ip, network_manager.server_port]
+	f3_diag_labels["code"].text = network_manager.room_code if not network_manager.room_code.is_empty() else "BRAK"
+	
+	var my_id = multiplayer.get_unique_id() if multiplayer.multiplayer_peer else 1
+	f3_diag_labels["peer"].text = str(my_id)
+	
+	var p_count = network_manager.get_players_list().size()
+	f3_diag_labels["players"].text = "%d / 4" % p_count
+	
+	var fps = Engine.get_frames_per_second()
+	var frame_ms = 1000.0 / maxf(1.0, float(fps))
+	f3_diag_labels["fps"].text = "%d FPS (%.1f ms)" % [fps, frame_ms]
