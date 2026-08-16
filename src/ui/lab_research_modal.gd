@@ -332,40 +332,54 @@ func _render_card_widget(item: ResearchSystem.CardItem) -> void:
 		cvbox.add_child(active_badge)
 		
 	else:
-		# Covered (Rewers) - Cyberpunk Face-down Frame
-		var sb_rewers = UITheme.create_panel_style(Color(0.04, 0.08, 0.15, 0.95), UITheme.COLOR_ACCENT_CYAN, 4, 1.5, 8)
+		# Covered (Rewers) - Texture from card_revers.png with Cyberpunk Overlay
+		var sb_rewers = UITheme.create_panel_style(Color(0.02, 0.04, 0.08, 0.98), UITheme.COLOR_ACCENT_CYAN, 4, 1.5, 4)
 		c_panel.add_theme_stylebox_override("panel", sb_rewers)
 		grid_container.add_child(c_panel)
 		
+		# Layer 1: Reverse Texture
+		var tex_rect = TextureRect.new()
+		tex_rect.texture = _get_revers_texture()
+		tex_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tex_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		tex_rect.set_anchors_preset(PRESET_FULL_RECT)
+		tex_rect.mouse_filter = Control.MOUSE_FILTER_PASS
+		c_panel.add_child(tex_rect)
+		
+		# Layer 2: Semi-transparent dark gradient overlay
+		var dark_tint = ColorRect.new()
+		dark_tint.color = Color(0.01, 0.03, 0.07, 0.45)
+		dark_tint.set_anchors_preset(PRESET_FULL_RECT)
+		dark_tint.mouse_filter = Control.MOUSE_FILTER_PASS
+		c_panel.add_child(dark_tint)
+		
+		# Layer 3: Overlay content & buttons
 		var cvbox = VBoxContainer.new()
 		cvbox.add_theme_constant_override("separation", 6)
+		cvbox.mouse_filter = Control.MOUSE_FILTER_PASS
 		c_panel.add_child(cvbox)
 		
+		var badge_panel = PanelContainer.new()
+		var badge_sb = UITheme.create_panel_style(Color(0.02, 0.06, 0.12, 0.88), UITheme.COLOR_ACCENT_CYAN, 3, 1, 4)
+		badge_panel.add_theme_stylebox_override("panel", badge_sb)
+		cvbox.add_child(badge_panel)
+		
 		var rew_hdr = Label.new()
-		rew_hdr.text = "ZAKRYTA"
+		rew_hdr.text = "ZASZYFROWANA KARTA"
 		rew_hdr.add_theme_font_size_override("font_size", 10)
 		rew_hdr.add_theme_color_override("font_color", UITheme.COLOR_ACCENT_CYAN)
 		rew_hdr.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		cvbox.add_child(rew_hdr)
+		badge_panel.add_child(rew_hdr)
 		
-		var lock_lbl = Label.new()
-		lock_lbl.text = "💾"
-		lock_lbl.add_theme_font_size_override("font_size", 32)
-		lock_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		cvbox.add_child(lock_lbl)
-		
-		var rew_sub = Label.new()
-		rew_sub.text = "Nieodkryta karta badań. Odkryj, aby aktywować."
-		rew_sub.add_theme_font_size_override("font_size", 10)
-		rew_sub.add_theme_color_override("font_color", UITheme.COLOR_TEXT_MUTED)
-		rew_sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		rew_sub.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		cvbox.add_child(rew_sub)
+		var spacer = Control.new()
+		spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		cvbox.add_child(spacer)
 		
 		var rev_btn = Button.new()
 		rev_btn.text = "🔓 ODKRYJ"
-		rev_btn.custom_minimum_size = Vector2(0, 30)
-		UITheme.style_button(rev_btn, Color(0.10, 0.35, 0.22), UITheme.COLOR_SUCCESS_GREEN, 30, 11)
+		rev_btn.custom_minimum_size = Vector2(0, 32)
+		UITheme.style_button(rev_btn, Color(0.08, 0.32, 0.18, 0.92), UITheme.COLOR_SUCCESS_GREEN, 32, 11)
 		var item_id = item.item_id
 		rev_btn.pressed.connect(func():
 			_on_reveal_pressed(item_id)
@@ -375,11 +389,18 @@ func _render_card_widget(item: ResearchSystem.CardItem) -> void:
 		var sell_btn = Button.new()
 		sell_btn.text = "💰 SPRZEDAJ (100%)"
 		sell_btn.custom_minimum_size = Vector2(0, 26)
-		UITheme.style_button(sell_btn, Color(0.28, 0.16, 0.08), UITheme.COLOR_WARNING_GOLD, 26, 10)
+		UITheme.style_button(sell_btn, Color(0.24, 0.14, 0.06, 0.90), UITheme.COLOR_WARNING_GOLD, 26, 10)
 		sell_btn.pressed.connect(func():
 			_on_sell_pressed(item_id)
 		)
 		cvbox.add_child(sell_btn)
+
+static var revers_texture: Texture2D = null
+
+func _get_revers_texture() -> Texture2D:
+	if revers_texture == null:
+		revers_texture = UITheme.load_texture_safe("res://public/ui/card_revers.png")
+	return revers_texture
 
 func _on_craft_pressed() -> void:
 	var item = research.craft_common_card(economy)
