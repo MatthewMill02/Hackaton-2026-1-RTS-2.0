@@ -48,6 +48,7 @@ var match_target_score: int = 1200
 var match_duration_min: int = 45
 
 var countdown_active: bool = false
+var current_countdown_sec: int = -1
 var current_ping_ms: int = 0
 var _ping_timer: float = 0.0
 
